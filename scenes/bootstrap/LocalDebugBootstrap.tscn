@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bjefwljapo4rv"]
+
+[ext_resource type="Script" uid="uid://dlpioojqwtcoc" path="res://scenes/bootstrap/LocalDebugBootstrap.gd" id="1_xdq5u"]
+
+[node name="LocalDebugBootstrap" type="Node" unique_id=1945115785]
+script = ExtResource("1_xdq5u")

@@ -11,8 +11,16 @@ config_version=5
 [application]
 
 config/name="RevealTogether"
+run/main_scene="res://scenes/bootstrap/AppEntry.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
+
+[autoload]
+
+RuntimeConfig="*res://autoload/app/RuntimeConfig.gd"
+LogService="*res://autoload/app/LogService.gd"
+ContentRegistry="*res://autoload/app/ContentRegistry.gd"
+AppBootstrap="*res://autoload/app/AppBootstrap.gd"
 
 [physics]
 
