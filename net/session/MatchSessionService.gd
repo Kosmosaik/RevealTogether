@@ -7,6 +7,7 @@ signal join_match_rejected(reject_payload: Dictionary)
 signal player_spawned(player_payload: Dictionary)
 signal player_despawned(player_payload: Dictionary)
 signal player_transforms_replicated(replication_payload: Dictionary)
+signal board_delta_replicated(replication_payload: Dictionary)
 
 var _service_mode: StringName = &"none"
 var _network_peer: ENetMultiplayerPeer = null
@@ -17,6 +18,7 @@ var _local_peer_id: int = 0
 var _local_joined_match_id: String = ""
 var _server_spawn_slot_by_peer_id: Dictionary = {}
 var _server_replication_accumulator_sec: float = 0.0
+var _server_reveal_tick_accumulator_sec: float = 0.0
 
 func _ready() -> void:
 	# This shared RPC node must live at the same path on client and server.
@@ -48,23 +50,35 @@ func start_server_mode() -> void:
 
 	multiplayer.multiplayer_peer = _network_peer
 	_server_replication_accumulator_sec = 0.0
+	_server_reveal_tick_accumulator_sec = 0.0
 	set_process(true)
 
 	LogService.info("NET", "Dedicated server listening on UDP port %s for up to %s client(s)." % [listen_port, max_clients])
 
 	_match_state = MatchState.new()
 	_match_state.match_id = RuntimeConfig.get_string("match", "default_match_id", "main")
-
-	var default_map_preset_id: String = RuntimeConfig.get_string("match", "default_map_preset_id", "map_preset.sandbox_64")
-	var configured_map_preset_id: String = RuntimeConfig.get_string("server", "map_preset_id", default_map_preset_id)
-	if configured_map_preset_id.is_empty():
-		configured_map_preset_id = default_map_preset_id
-
-	_match_state.map_preset_id = StringName(configured_map_preset_id)
+	_match_state.map_preset_id = _resolve_server_map_preset_id()
 	_match_state.started_at_unix_ms = int(Time.get_unix_time_from_system() * 1000)
+	_match_state.board_state = _build_board_state_for_map_preset(_match_state.map_preset_id)
 
+	if _match_state.board_state == null:
+		LogService.error("NET", "Server could not build board state for map preset '%s'." % String(_match_state.map_preset_id))
+		push_error("MatchSessionService could not build the server board state.")
+		shutdown_session()
+		return
+
+	var board_summary: Dictionary = _match_state.board_state.to_summary_dto()
 	LogService.info("NET", "Server match '%s' is using map preset '%s'." % [_match_state.match_id, String(_match_state.map_preset_id)])
-
+	LogService.info(
+		"NET",
+		"Board initialized: %sx%s tiles, %s chunk(s), %s unlocked seed tile(s)." % [
+			board_summary.get("board_width", 0),
+			board_summary.get("board_height", 0),
+			board_summary.get("chunk_count", 0),
+			board_summary.get("unlocked_tile_count", 0)
+		]
+	)
+	
 func start_client_mode() -> void:
 	shutdown_session()
 
@@ -87,6 +101,26 @@ func start_local_debug_mode() -> void:
 	_service_mode = &"local_debug"
 	LogService.info("NET", "Local debug mode active. Network peer is not started yet.")
 
+func _resolve_server_map_preset_id() -> StringName:
+	var default_map_preset_id: String = RuntimeConfig.get_string("match", "default_map_preset_id", "map_preset.sandbox_64")
+	var configured_map_preset_id: String = RuntimeConfig.get_string("server", "map_preset_id", default_map_preset_id)
+	if configured_map_preset_id.is_empty():
+		configured_map_preset_id = default_map_preset_id
+	return StringName(configured_map_preset_id)
+
+func _build_board_state_for_map_preset(map_preset_id: StringName) -> BoardState:
+	if not ContentRegistry.has_content(map_preset_id):
+		LogService.error("NET", "Map preset '%s' is missing from ContentRegistry." % String(map_preset_id))
+		return null
+
+	var map_preset_resource: Resource = ContentRegistry.get_content(map_preset_id)
+	var map_preset_def: MapPresetDef = map_preset_resource as MapPresetDef
+	if map_preset_def == null:
+		LogService.error("NET", "Content '%s' is not a MapPresetDef resource." % String(map_preset_id))
+		return null
+
+	return BoardBuilder.build_board_state_from_map_preset(map_preset_def)
+
 func shutdown_session() -> void:
 	if multiplayer.multiplayer_peer != null:
 		multiplayer.multiplayer_peer.close()
@@ -101,6 +135,7 @@ func shutdown_session() -> void:
 	_local_joined_match_id = ""
 	_server_spawn_slot_by_peer_id.clear()
 	_server_replication_accumulator_sec = 0.0
+	_server_reveal_tick_accumulator_sec = 0.0
 	set_process(false)
 
 func get_local_peer_id() -> int:
@@ -113,6 +148,20 @@ func get_player_snapshot_by_peer_id_copy(peer_id: int) -> Dictionary:
 	if not _local_player_snapshot_by_peer_id.has(peer_id):
 		return {}
 	return (_local_player_snapshot_by_peer_id[peer_id] as Dictionary).duplicate(true)
+	
+func request_reveal_tile(tile_index: int) -> void:
+	if _service_mode != &"client":
+		return
+
+	if tile_index < 0:
+		return
+
+	if _local_joined_match_id.is_empty():
+		LogService.debug("NET", "Reveal tile request ignored because no match has been joined yet.")
+		return
+
+	var request_payload: Dictionary = ConnectionDtos.build_reveal_tile_request_payload(_local_joined_match_id, tile_index)
+	rpc_id(NetProtocol.SERVER_PEER_ID, "rpc_receive_reveal_tile_request", request_payload)
 
 func _process(delta: float) -> void:
 	if _service_mode != &"server":
@@ -120,6 +169,16 @@ func _process(delta: float) -> void:
 
 	if _match_state == null:
 		return
+
+	if _match_state.board_state == null:
+		return
+
+	var reveal_tick_interval_sec: float = _get_server_reveal_tick_interval_sec()
+	_server_reveal_tick_accumulator_sec += delta
+
+	while _server_reveal_tick_accumulator_sec >= reveal_tick_interval_sec:
+		_server_reveal_tick_accumulator_sec -= reveal_tick_interval_sec
+		_process_server_reveal_actions()
 
 	if _match_state.players_by_peer_id.is_empty():
 		return
@@ -451,6 +510,70 @@ func rpc_receive_player_transform_replication(replication_payload: Dictionary) -
 		_local_player_snapshot_by_peer_id[peer_id] = merged_snapshot
 
 	player_transforms_replicated.emit(replication_payload)
+	
+@rpc("any_peer", "call_remote", "reliable", NetProtocol.GAMEPLAY_CHANNEL)
+
+func rpc_receive_reveal_tile_request(request_payload: Dictionary) -> void:
+	if not multiplayer.is_server():
+		return
+
+	var sender_peer_id: int = multiplayer.get_remote_sender_id()
+	if sender_peer_id <= 0:
+		return
+
+	if _match_state == null:
+		return
+
+	if _match_state.board_state == null:
+		return
+
+	if not _handshake_approved_by_peer_id.has(sender_peer_id):
+		LogService.warn("NET", "Rejected reveal tile request from peer %s before handshake approval." % sender_peer_id)
+		return
+
+	var requested_match_id: String = str(request_payload.get("match_id", ""))
+	if requested_match_id != _match_state.match_id:
+		LogService.warn("NET", "Rejected reveal tile request from peer %s for unexpected match '%s'." % [sender_peer_id, requested_match_id])
+		return
+
+	if not _match_state.has_player_state(sender_peer_id):
+		LogService.warn("NET", "Rejected reveal tile request from unknown player peer %s." % sender_peer_id)
+		return
+
+	var tile_index: int = int(request_payload.get("tile_index", -1))
+	var action_timestamp_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+	var player_state: MatchPlayerState = _match_state.get_player_state(sender_peer_id)
+	var action_result: Dictionary = BoardActionService.try_reveal_tile(_match_state, sender_peer_id, tile_index, action_timestamp_ms)
+
+	if not bool(action_result.get("accepted", false)):
+		LogService.debug("NET", "Reveal tile request rejected for peer %s: %s." % [sender_peer_id, str(action_result.get("reason", "unknown"))])
+		return
+
+	if _match_state.state == NetProtocol.MATCH_STATE_WAITING_FOR_PLAYERS:
+		_match_state.state = NetProtocol.MATCH_STATE_ACTIVE
+
+	player_state.last_input_tick = action_timestamp_ms
+
+	if bool(action_result.get("action_should_continue", false)):
+		player_state.current_action_state = NetProtocol.ACTION_STATE_REVEALING
+		player_state.current_targeted_tile_index = tile_index
+	else:
+		player_state.current_action_state = NetProtocol.ACTION_STATE_IDLE
+		player_state.current_targeted_tile_index = -1
+
+	var changed_tile_indices: Array = action_result.get("changed_tile_indices", [])
+	_broadcast_board_delta_to_connected_clients(changed_tile_indices, &"reveal_tile", sender_peer_id)
+
+@rpc("authority", "call_remote", "reliable", NetProtocol.GAMEPLAY_CHANNEL)
+func rpc_receive_board_delta(replication_payload: Dictionary) -> void:
+	if multiplayer.is_server():
+		return
+
+	var match_id: String = str(replication_payload.get("match_id", ""))
+	if match_id != _local_joined_match_id:
+		return
+
+	board_delta_replicated.emit(replication_payload)
 
 func _allocate_spawn_slot_for_peer(peer_id: int) -> int:
 	if _server_spawn_slot_by_peer_id.has(peer_id):
@@ -470,6 +593,100 @@ func _allocate_spawn_slot_for_peer(peer_id: int) -> int:
 func _get_server_replication_interval_sec() -> float:
 	return max(RuntimeConfig.get_float("replication", "player_transform_interval_sec", 0.100), 0.020)
 
+func _get_server_reveal_tick_interval_sec() -> float:
+	return max(RuntimeConfig.get_float("board_actions", "reveal_tick_interval_sec", 0.20), 0.050)
+
+func _process_server_reveal_actions() -> void:
+	if _match_state == null:
+		return
+
+	if _match_state.board_state == null:
+		return
+
+	var changed_tile_indices: Array = []
+	var changed_tile_lookup: Dictionary = {}
+	var action_timestamp_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+	var did_process_reveal_tick: bool = false
+
+	for tile_record_variant in _match_state.board_state.tiles:
+		var tile_record: TileRecord = tile_record_variant as TileRecord
+		if tile_record == null:
+			continue
+
+		if tile_record.claim_owner_peer_id <= 0:
+			continue
+
+		if tile_record.claim_expires_at_ms <= 0:
+			continue
+
+		if tile_record.claim_expires_at_ms > action_timestamp_ms:
+			continue
+
+		tile_record.claim_owner_peer_id = 0
+		tile_record.claim_expires_at_ms = 0
+		_match_state.board_state.mark_tile_dirty(tile_record.tile_index)
+
+		if not changed_tile_lookup.has(tile_record.tile_index):
+			changed_tile_lookup[tile_record.tile_index] = true
+			changed_tile_indices.append(tile_record.tile_index)
+
+	var player_peer_id_list: Array = _match_state.players_by_peer_id.keys()
+
+	for peer_id_variant in player_peer_id_list:
+		var peer_id: int = int(peer_id_variant)
+		var player_state: MatchPlayerState = _match_state.get_player_state(peer_id)
+		if player_state == null:
+			continue
+
+		if player_state.current_action_state != NetProtocol.ACTION_STATE_REVEALING:
+			continue
+
+		if player_state.current_targeted_tile_index < 0:
+			player_state.current_action_state = NetProtocol.ACTION_STATE_IDLE
+			player_state.current_targeted_tile_index = -1
+			continue
+
+		did_process_reveal_tick = true
+
+		var action_result: Dictionary = BoardActionService.try_reveal_tile(
+			_match_state,
+			peer_id,
+			player_state.current_targeted_tile_index,
+			action_timestamp_ms
+		)
+
+		if not bool(action_result.get("accepted", false)):
+			player_state.current_action_state = NetProtocol.ACTION_STATE_IDLE
+			player_state.current_targeted_tile_index = -1
+			continue
+
+		if _match_state.state == NetProtocol.MATCH_STATE_WAITING_FOR_PLAYERS:
+			_match_state.state = NetProtocol.MATCH_STATE_ACTIVE
+
+		player_state.last_input_tick = action_timestamp_ms
+
+		if not bool(action_result.get("action_should_continue", false)):
+			player_state.current_action_state = NetProtocol.ACTION_STATE_IDLE
+			player_state.current_targeted_tile_index = -1
+
+		var action_changed_tile_indices: Array = action_result.get("changed_tile_indices", [])
+		for changed_tile_index_variant in action_changed_tile_indices:
+			var changed_tile_index: int = int(changed_tile_index_variant)
+			if changed_tile_lookup.has(changed_tile_index):
+				continue
+
+			changed_tile_lookup[changed_tile_index] = true
+			changed_tile_indices.append(changed_tile_index)
+
+	if changed_tile_indices.is_empty():
+		return
+
+	var cause: StringName = &"claim_timeout"
+	if did_process_reveal_tick:
+		cause = &"reveal_tick"
+
+	_broadcast_board_delta_to_connected_clients(changed_tile_indices, cause, 0)
+
 func _broadcast_player_transform_replication_to_connected_clients() -> void:
 	if _match_state == null:
 		return
@@ -480,6 +697,27 @@ func _broadcast_player_transform_replication_to_connected_clients() -> void:
 		if not _match_state.has_player_state(approved_peer_id):
 			continue
 		rpc_id(approved_peer_id, "rpc_receive_player_transform_replication", replication_payload)
+
+func _broadcast_board_delta_to_connected_clients(changed_tile_indices: Array, cause: StringName, actor_peer_id: int) -> void:
+	if _match_state == null:
+		return
+
+	if _match_state.board_state == null:
+		return
+
+	if changed_tile_indices.is_empty():
+		return
+
+	var replication_payload: Dictionary = ConnectionDtos.build_board_delta_payload(_match_state, changed_tile_indices, cause, actor_peer_id)
+
+	for approved_peer_id_variant in _handshake_approved_by_peer_id.keys():
+		var approved_peer_id: int = int(approved_peer_id_variant)
+		if not _match_state.has_player_state(approved_peer_id):
+			continue
+
+		rpc_id(approved_peer_id, "rpc_receive_board_delta", replication_payload)
+
+	_match_state.board_state.clear_all_chunk_dirty_sets()
 
 func _send_hello_reject_to_peer(
 	peer_id: int,

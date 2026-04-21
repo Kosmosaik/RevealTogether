@@ -3,7 +3,7 @@ class_name MatchState
 
 var match_id: String = ""
 var map_preset_id: StringName = &""
-var board_state: RefCounted = null
+var board_state: BoardState = null
 var players_by_peer_id: Dictionary = {}
 var started_at_unix_ms: int = 0
 var state: StringName = NetProtocol.MATCH_STATE_WAITING_FOR_PLAYERS
