@@ -1,5 +1,6 @@
 extends Node3D
 
+const PlayerOrbitCameraRigControllerScript = preload("res://game/client/camera/PlayerOrbitCameraRigController.gd")
 @onready var _world_environment: WorldEnvironment = $WorldEnvironment
 @onready var _sun_light: DirectionalLight3D = $SunLight
 @onready var _ground_body: StaticBody3D = $Ground
@@ -15,6 +16,10 @@ var _board_view_scene: PackedScene = null
 var _board_view: BoardGridView3D = null
 var _player_avatar_by_peer_id: Dictionary = {}
 var _local_peer_id: int = 0
+var _camera_controller: RefCounted = null
+
+var _local_move_request_accumulator_sec: float = 0.0
+var _local_last_submitted_action_state: StringName = NetProtocol.ACTION_STATE_IDLE
 
 func _ready() -> void:
 	_configure_environment()
@@ -30,9 +35,13 @@ func _ready() -> void:
 	_connect_match_session_signals()
 
 func _process(delta: float) -> void:
+	_update_local_player_movement(delta)
 	_update_camera_follow(delta)
 	
 func _unhandled_input(event: InputEvent) -> void:
+	if _camera_controller != null and _camera_controller.handle_input(event):
+		return
+
 	var mouse_button_event: InputEventMouseButton = event as InputEventMouseButton
 	if mouse_button_event == null:
 		return
@@ -116,37 +125,11 @@ func _configure_ground(minimum_world_size: Vector2 = Vector2.ZERO) -> void:
 	_ground_body.position = Vector3(0.0, -ground_surface_clearance - (ground_height * 0.5), 0.0)
 
 func _configure_camera() -> void:
-	var camera_height: float = max(
-		RuntimeConfig.get_float(
-			"camera_rig",
-			"camera_height",
-			RuntimeConfig.get_float("client_world", "camera_height", 26.0)
-		),
-		6.0
-	)
-	var camera_distance: float = max(
-		RuntimeConfig.get_float(
-			"camera_rig",
-			"camera_distance",
-			RuntimeConfig.get_float("client_world", "camera_distance", 18.0)
-		),
-		4.0
-	)
-	var camera_near: float = max(
-		RuntimeConfig.get_float("camera_rig", "camera_near", 0.05),
-		0.01
-	)
-	var camera_far: float = max(
-		RuntimeConfig.get_float("camera_rig", "camera_far", 4000.0),
-		camera_near + 1.0
-	)
+	if _camera_controller == null:
+		_camera_controller = PlayerOrbitCameraRigControllerScript.new()
 
 	_camera_rig.position = Vector3.ZERO
-	_camera.position = Vector3(0.0, camera_height, camera_distance)
-	_camera.near = camera_near
-	_camera.far = camera_far
-	_camera.make_current()
-	_camera.look_at(_camera_rig.global_position, Vector3.UP)
+	_camera_controller.configure(_camera_rig, _camera)
 	
 func _configure_viewport_rendering() -> void:
 	var viewport: Viewport = get_viewport()
@@ -236,6 +219,7 @@ func _connect_match_session_signals() -> void:
 		
 func _on_joined_match(snapshot_payload: Dictionary) -> void:
 	_local_peer_id = int(snapshot_payload.get("accepted_peer_id", 0))
+	_reset_local_movement_state()
 
 	var board_snapshot: Dictionary = snapshot_payload.get("board_snapshot", {})
 	_apply_board_snapshot_to_world(board_snapshot)
@@ -344,7 +328,119 @@ func _intersect_mouse_with_board_plane(screen_position: Vector2) -> Variant:
 	var board_plane: Plane = Plane(Vector3.UP, 0.0)
 	return board_plane.intersects_ray(ray_origin, ray_direction)
 
+func _update_local_player_movement(delta: float) -> void:
+	if _match_session_service == null:
+		return
+
+	if _local_peer_id <= 0:
+		return
+
+	var avatar_node = _get_local_player_avatar()
+	if avatar_node == null:
+		return
+
+	var move_input: Vector2 = Input.get_vector("move_left", "move_right", "move_back", "move_forward")
+	var has_move_input: bool = move_input.length_squared() > 0.0001
+
+	if not has_move_input:
+		if _local_last_submitted_action_state != NetProtocol.ACTION_STATE_MOVING:
+			return
+
+		_match_session_service.request_player_transform(
+			avatar_node.global_position,
+			avatar_node.rotation.y,
+			NetProtocol.ACTION_STATE_IDLE,
+			-1
+		)
+		_local_last_submitted_action_state = NetProtocol.ACTION_STATE_IDLE
+		_local_move_request_accumulator_sec = 0.0
+		return
+
+	var planar_right: Vector3 = Vector3.RIGHT
+	var planar_forward: Vector3 = Vector3.FORWARD
+
+	if _camera_controller != null:
+		planar_right = _camera_controller.get_planar_right_vector()
+		planar_forward = _camera_controller.get_planar_forward_vector()
+
+	var move_direction: Vector3 = (planar_right * move_input.x) + (planar_forward * move_input.y)
+	if move_direction.length_squared() <= 0.0001:
+		return
+	move_direction = move_direction.normalized()
+
+	var next_world_position: Vector3 = avatar_node.global_position + (
+		move_direction * _get_move_speed_units_per_sec() * delta
+	)
+	next_world_position = _clamp_world_position_to_ground_bounds(next_world_position)
+	next_world_position.y = avatar_node.global_position.y
+
+	var next_world_yaw_radians: float = _build_yaw_from_move_direction(move_direction)
+
+	avatar_node.apply_player_snapshot({
+		"world_position": next_world_position,
+		"world_yaw_radians": next_world_yaw_radians
+	}, true)
+
+	_local_move_request_accumulator_sec += delta
+
+	var should_submit_now: bool = _local_last_submitted_action_state != NetProtocol.ACTION_STATE_MOVING
+	if not should_submit_now and _local_move_request_accumulator_sec >= _get_move_request_interval_sec():
+		should_submit_now = true
+
+	if not should_submit_now:
+		return
+
+	_match_session_service.request_player_transform(
+		next_world_position,
+		next_world_yaw_radians,
+		NetProtocol.ACTION_STATE_MOVING,
+		-1
+	)
+	_local_last_submitted_action_state = NetProtocol.ACTION_STATE_MOVING
+	_local_move_request_accumulator_sec = 0.0
+
+func _get_local_player_avatar():
+	if _local_peer_id <= 0:
+		return null
+
+	if not _player_avatar_by_peer_id.has(_local_peer_id):
+		return null
+
+	return _player_avatar_by_peer_id[_local_peer_id]
+
+func _get_move_speed_units_per_sec() -> float:
+	return max(RuntimeConfig.get_float("movement", "move_speed_units_per_sec", 6.0), 0.1)
+
+func _get_move_request_interval_sec() -> float:
+	return max(RuntimeConfig.get_float("movement", "request_interval_sec", 0.05), 0.016)
+
+func _build_yaw_from_move_direction(move_direction: Vector3) -> float:
+	return atan2(-move_direction.x, -move_direction.z)
+
+func _clamp_world_position_to_ground_bounds(world_position: Vector3) -> Vector3:
+	var clamped_world_position: Vector3 = world_position
+	var body_radius: float = max(RuntimeConfig.get_float("client_world", "player_body_radius", 0.45), 0.1)
+
+	var ground_shape: BoxShape3D = _ground_collision_shape.shape as BoxShape3D
+	if ground_shape == null:
+		return clamped_world_position
+
+	var half_extents: Vector3 = ground_shape.size * 0.5
+	var clamp_limit_x: float = max(half_extents.x - body_radius, 0.0)
+	var clamp_limit_z: float = max(half_extents.z - body_radius, 0.0)
+
+	clamped_world_position.x = clampf(clamped_world_position.x, -clamp_limit_x, clamp_limit_x)
+	clamped_world_position.z = clampf(clamped_world_position.z, -clamp_limit_z, clamp_limit_z)
+	return clamped_world_position
+
+func _reset_local_movement_state() -> void:
+	_local_move_request_accumulator_sec = 0.0
+	_local_last_submitted_action_state = NetProtocol.ACTION_STATE_IDLE
+
 func _update_camera_follow(delta: float) -> void:
+	if _camera_controller == null:
+		return
+
 	if _local_peer_id <= 0:
 		return
 
@@ -355,23 +451,4 @@ func _update_camera_follow(delta: float) -> void:
 	if avatar_node == null:
 		return
 
-	var target_height: float = RuntimeConfig.get_float(
-		"camera_rig",
-		"look_at_height",
-		RuntimeConfig.get_float("client_world", "camera_target_height", 0.0)
-	)
-	var follow_lerp_rate: float = max(
-		RuntimeConfig.get_float(
-			"camera_rig",
-			"follow_lerp_speed",
-			RuntimeConfig.get_float("client_world", "camera_follow_lerp_rate", 8.0)
-		),
-		0.1
-	)
-	var desired_rig_position: Vector3 = avatar_node.global_position + Vector3(0.0, target_height, 0.0)
-
-	_camera_rig.global_position = _camera_rig.global_position.lerp(
-		desired_rig_position,
-		clamp(delta * follow_lerp_rate, 0.0, 1.0)
-	)
-	_camera.look_at(_camera_rig.global_position, Vector3.UP)
+	_camera_controller.update_follow(avatar_node.global_position, delta)

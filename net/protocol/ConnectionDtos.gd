@@ -38,6 +38,20 @@ static func build_reveal_tile_request_payload(match_id: String, tile_index: int)
 		"tile_index": tile_index,
 	}
 
+static func build_player_transform_request_payload(
+	match_id: String,
+	world_position: Vector3,
+	world_yaw_radians: float,
+	current_action_state: StringName,
+	current_targeted_tile_index: int
+) -> Dictionary:
+	return {
+		"match_id": match_id,
+		"world_position": world_position,
+		"world_yaw_radians": world_yaw_radians,
+		"current_action_state": String(current_action_state),
+		"current_targeted_tile_index": current_targeted_tile_index,
+	}
 
 static func build_board_delta_payload(match_state: MatchState, changed_tile_indices: Array, cause: StringName = &"", actor_peer_id: int = 0) -> Dictionary:
 	var board_state: BoardState = match_state.board_state

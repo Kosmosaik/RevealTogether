@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="TileFamilyDef" format=3]
+
+[ext_resource type="Script" path="res://data/tile_families/TileFamilyDef.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"tile_family.scrap"
+display_name = "Scrap"
+tags = PackedStringArray("tile_family", "industrial", "metal")
+assignment_weight = 1.0

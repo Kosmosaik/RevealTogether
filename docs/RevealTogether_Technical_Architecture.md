@@ -2,543 +2,441 @@
 
 ## Purpose
 
-This document defines the technical direction for **RevealTogether**.
-It is focused on architecture, system boundaries, data ownership, and implementation rules.
+This document describes the technical architecture that is **actually present in the current repo**, while also preserving the architectural rules that future work should follow.
 
-Primary goals:
-
-- data-driven structure
-- modular systems
-- clean separation of authority
-- easy configurability
-- future expansion without throwaway hacks
-- no dependence on later full refactors to become maintainable
+It should be read as the source of truth for current runtime boundaries, ownership, and extension points.
 
 ---
 
-## Current implementation snapshot (2026-04-20)
+## Current implementation snapshot (2026-04-23)
 
-The current project already has the Phase 0 and Phase 1 foundation in place.
+The project currently has four major layers online:
 
-### Implemented foundation
-- Config-driven runtime boot through `AppBootstrap` and `RuntimeConfig`
-- Centralized structured logging via `LogService`
-- Content bootstrap and startup validation via `ContentRegistry` and `StartupValidator`
-- Dedicated server and client runtime flows
-- Session handshake with explicit hello ack/reject and join snapshot/reject paths
-- Server-owned player session state, spawn allocation, despawn cleanup, and basic transform snapshot replication
-- Sandbox world and replica avatar presentation used to validate the multiplayer baseline
+1. **bootstrap/runtime foundations**
+2. **authoritative multiplayer session flow**
+3. **authoritative board/reveal gameplay runtime**
+4. **client-side 3D presentation and interaction**
 
-### Architectural implication
-The next work should not expand the networking foundation sideways. The correct next move is to layer the authoritative board runtime on top of the already-working session stack.
+### Implemented today
+- runtime mode bootstrap through `AppBootstrap`
+- config loading through `RuntimeConfig`
+- logging through `LogService`
+- content loading through `ContentRegistry`
+- startup validation through `StartupValidator`
+- authoritative session flow through `MatchSessionService`
+- board runtime through `BoardState`, `TileRecord`, `ChunkState`, `BoardBuilder`, and `BoardActionService`
+- match/player runtime through `MatchState`, `MatchPlayerState`, and `MatchSpawnPlanner`
+- DTO construction through `ConnectionDtos`
+- client world orchestration through `ClientSandboxWorld`
+- board rendering through `BoardGridView3D`
+- orbit camera follow through `PlayerOrbitCameraRigController`
+- tile variant visual selection through `TileVariantDef.visual_scene`
 
----
-
-## 1. Core architecture statement
-
-RevealTogether should be built as a:
-
-**server-authoritative, data-driven, modular 3D online game with a 2D logical grid underneath the world presentation.**
-
-This means:
-
-- gameplay rules run on a logical tile grid
-- the world is presented in 3D
-- the server owns truth for important state
-- clients render and request actions, but do not decide outcomes
-- content is defined through data assets and registries rather than scattered hardcoded assumptions
-
----
-
-## 2. Guiding engineering principles
-
-## 2.1 Server owns truth
-The server must be authoritative for:
-
-- tile claims
-- damage validation
-- tile HP changes
-- tile clear events
-- unlock propagation
-- drop generation
-- map progression
-- end-of-map results
-
-## 2.2 Scene tree is not the source of truth
-Gameplay-critical state should not live only inside scene nodes.
-Scene nodes are presentation and interaction views.
-The core authoritative state should exist as structured runtime data.
-
-## 2.3 Data first, scripts second
-Families, variants, behaviors, roles, map presets, and tuning values should be defined through data where practical.
-Scripts should interpret data rather than embed design assumptions everywhere.
-
-## 2.4 Extension points over one-off hacks
-If a future feature needs a special case, add a formal extension point instead of patching a random gameplay script.
-
-## 2.5 Stable boundaries early
-The project should have clear boundaries from the beginning:
-
-- server simulation
-- client presentation
-- shared protocol and data definitions
-- content resources
-- tools and validators
+### Not implemented yet
+- authored role runtime/content
+- authored tile behavior definitions beyond the current structural field/link level
+- inventory, Tool, Charm, or drop runtime
+- results pipeline and match-complete presentation layer
+- dedicated content inspection/debug UI beyond logs and validation errors
 
 ---
 
-## 3. Runtime model
+## 1. Architecture principles
 
-## 3.1 Grid simulation with 3D presentation
-The gameplay simulation should run on a logical 2D board.
-Each tile has stable grid coordinates.
-Those coordinates are projected into a 3D world position for rendering and interaction.
+These rules still apply and should continue guiding new work.
 
-Benefits:
-- simple adjacency logic
-- clean unlock propagation
-- efficient board representation
-- easier networking
-- easy chunking
-- straightforward image reveal mapping
+## 1.1 Server owns gameplay truth
+The client may request actions, but the server owns:
+- session membership
+- player snapshot truth
+- board state truth
+- reveal progress
+- claim ownership and expiry
+- clear/unlock propagation
+- final-rush state
 
-## 3.2 Tile record as authoritative data
-A tile should be represented primarily as structured data.
+## 1.2 Data and presentation stay separate
+Gameplay truth should live in runtime state objects and authored defs/resources.
+Visual scenes should render runtime truth, not replace it.
 
-Minimum tile state should include:
+## 1.3 Content must be authored and validated
+Content IDs and cross-links should load through the registry and fail startup early when broken.
 
+## 1.4 Future systems should plug into extension points
+New roles, items, tile families, or behaviors should extend the existing structure instead of becoming hardcoded branches in central gameplay scripts.
+
+---
+
+## 2. Actual project structure in the repo
+
+```text
+autoload/
+  app/
+    AppBootstrap.gd
+    ContentRegistry.gd
+    LogService.gd
+    RuntimeConfig.gd
+
+config/
+  defaults/
+    app.cfg
+    client.cfg
+    local_debug.cfg
+    server.cfg
+
+core/
+  content/
+    GameContentDef.gd
+  validation/
+    StartupValidator.gd
+
+data/
+  map_presets/
+    MapPresetDef.gd
+    map_preset_sandbox_64.tres
+  tile_families/
+    TileFamilyDef.gd
+    tile_family_overgrowth.tres
+    tile_family_scrap.tres
+  tile_variants/
+    TileVariantDef.gd
+    tile_variant_overgrowth_patch.tres
+    tile_variant_scrap_plate.tres
+  roles/
+  tile_behaviors/
+  items/
+    tools/
+    charms/
+  tuning/
+
+game/
+  client/
+    camera/
+      PlayerOrbitCameraRigController.gd
+  runtime/
+    board/
+      BoardActionService.gd
+      BoardBuilder.gd
+      BoardState.gd
+      BoardTileContentCatalog.gd
+      ChunkState.gd
+      TileRecord.gd
+    match/
+      MatchPlayerState.gd
+      MatchSpawnPlanner.gd
+      MatchState.gd
+
+net/
+  protocol/
+    ConnectionDtos.gd
+  session/
+    MatchSessionService.gd
+
+scenes/
+  bootstrap/
+    ClientBootstrap.tscn
+    DedicatedServerBootstrap.tscn
+    LocalDebugBootstrap.tscn
+    bootstrap scripts
+  world/
+    ClientSandboxWorld.tscn
+    ClientSandboxWorld.gd
+    board/
+      BoardGridView3D.tscn
+      BoardGridView3D.gd
+      BoardTileVisual.gd
+      tile_visuals/
+        OvergrowthPatchTileVisual.tscn
+        OvergrowthPatchTileVisual.gd
+        ScrapPlateTileVisual.tscn
+    replicas/
+      PlayerReplicaAvatar.tscn
+      PlayerReplicaAvatar.gd
+```
+
+---
+
+## 3. Bootstrap and runtime ownership
+
+## 3.1 `AppBootstrap`
+`AppBootstrap` is the startup gatekeeper.
+It loads runtime config, loads content, runs startup validation, determines runtime mode, and opens the correct bootstrap scene.
+
+## 3.2 `RuntimeConfig`
+`RuntimeConfig` is the config access layer for merged defaults/runtime values.
+Gameplay and presentation scripts read runtime tuning from here rather than baking constants directly into multiple places.
+
+## 3.3 `ContentRegistry`
+`ContentRegistry` scans configured content directories, instantiates supported resource types, validates IDs, and provides lookup access to loaded content.
+
+## 3.4 `StartupValidator`
+`StartupValidator` performs startup-time validation of the currently supported data domains.
+At the moment this includes:
+- map preset validation
+- tile family validation
+- tile variant validation
+- cross-reference checks between families and variants
+
+---
+
+## 4. Current authoritative multiplayer/session model
+
+## 4.1 `MatchSessionService`
+`MatchSessionService` is the current session/network orchestrator.
+It owns:
+- ENet server/client startup
+- hello handshake
+- join-match flow
+- player spawn/despawn replication
+- authoritative player transform requests on the server
+- authoritative reveal requests on the server
+- periodic transform replication
+- periodic reveal processing and board delta replication
+
+## 4.2 Join/bootstrap replication flow
+The current session flow is:
+1. client connects
+2. client receives hello ack/reject
+3. client requests join
+4. server creates/uses authoritative `MatchState`
+5. server sends match snapshot including player snapshots and a full board snapshot
+6. client world instantiates board view and player replicas from that snapshot
+
+## 4.3 Ongoing replication model
+After join:
+- player transforms are replicated on an interval
+- reveal actions are processed on a server tick interval
+- board changes are sent as changed-tile delta payloads instead of full board snapshots each tick
+
+---
+
+## 5. Current match/runtime state model
+
+## 5.1 `MatchState`
+`MatchState` owns the per-match authoritative runtime bundle.
+It includes:
+- match identity
+- map preset identity
+- `BoardState`
+- player snapshot storage
+- spawn slot bookkeeping
+- match-completion/final-rush related summary state
+
+## 5.2 `MatchPlayerState`
+`MatchPlayerState` owns per-player authoritative match data such as:
+- peer identity
+- display name
+- world position
+- yaw
+- active reveal target tile index
+- spawn slot index
+
+## 5.3 `MatchSpawnPlanner`
+`MatchSpawnPlanner` calculates spawn positions around the board using runtime-configured ring settings.
+Spawn logic is not baked into visual scenes.
+
+---
+
+## 6. Current board runtime model
+
+## 6.1 `BoardState`
+`BoardState` is the authoritative board container.
+It owns:
+- board dimensions
+- chunk dimensions/counts
+- map preset identity
+- reveal image path/id summary data
+- `TileRecord` storage
+- chunk storage
+- remaining/cleared/unlocked counters
+- final-rush and completion summary state
+
+It exposes snapshot/summary DTO builders that are used by the network layer.
+
+## 6.2 `TileRecord`
+The current `TileRecord` fields are:
+- `tile_index`
 - `tile_id`
 - `grid_x`
 - `grid_y`
-- `chunk_id`
+- `chunk_index`
 - `family_id`
 - `variant_id`
 - `behavior_id`
-- `state`
+- `state_flags`
 - `max_hp`
 - `current_hp`
 - `is_unlocked`
 - `is_cleared`
-- `claim_owner_id`
-- `last_damage_time`
-- `special_flags`
-- `image_reference` or `uv_reference`
+- `claim_owner_peer_id`
+- `claim_expires_at_ms`
+- `last_damage_at_ms`
+- `rare_signal_state`
+- `uv_rect`
+- `runtime_tags`
 
-This should be held in authoritative runtime state rather than reconstructed from scene conditions.
+This is the current authoritative tile truth.
+
+## 6.3 `ChunkState`
+`ChunkState` groups tile indices by chunk and stores chunk coordinate/size metadata.
+Chunking is part of the board runtime model even though current rendering is still lightweight.
+
+## 6.4 `BoardBuilder`
+`BoardBuilder` constructs the authoritative board from a `MapPresetDef`.
+Its current responsibilities include:
+- board dimensions and chunk layout
+- reveal texture UV mapping
+- unlock seed placement
+- procedural family/variant assignment for the currently authored content slice
+- tile/chunk population
+- initial summary counter setup
+
+## 6.5 `BoardActionService`
+`BoardActionService` applies authoritative reveal/clear gameplay rules.
+Its current responsibilities include:
+- reveal damage ticks
+- claim acquisition/refresh
+- claim expiry
+- tile clear handling
+- adjacent unlock propagation
+- final-rush transition
+- board completion detection
+- changed-tile collection for replication
 
 ---
 
-## 4. Tile content model
+## 7. Current content model
 
-The tile system should separate four concepts clearly.
+## 7.1 Supported authored resource types
+The repo currently supports these authored content types:
+- `MapPresetDef`
+- `TileFamilyDef`
+- `TileVariantDef`
 
-## 4.1 Family
-Broad style bucket.
+## 7.2 Current authored content slice
+The currently authored content slice is:
+- map preset: `map_preset.sandbox_64`
+- families: `tile_family.overgrowth`, `tile_family.scrap`
+- variants: `tile_variant.overgrowth_patch`, `tile_variant.scrap_plate`
 
-Examples:
-- Relic
-- Glitch
-- Overgrowth
-- Scrap
-
-Family definitions should hold:
+## 7.3 Current family/variant responsibilities
+`TileFamilyDef` currently carries family-level metadata such as:
+- ID
 - display name
-- tags
-- visual theme references
-- VFX palette references
-- SFX palette references
-- default visual metadata
+- family color
+- spawn weight
+- fallback/default behavior link fields
 
-## 4.2 Variant
-Specific tile type inside a family.
-
-Examples:
-- Tomb
-- Desert Dig Site
-- Fossil Bed
-- Mushroom Patch
-- Forest Trunk
-- Cable Nest
-- Rust Plate
-
-Variant definitions should hold:
-- stable ID
-- family link
+`TileVariantDef` currently carries variant-level metadata such as:
+- ID
+- family ID
 - display name
-- tags
-- visual prefab or mesh reference
-- default behavior link
-- icon or preview references
+- spawn weight override / weighting support
+- behavior override link
+- visual scene reference
 
-## 4.3 Behavior
-Behavior defines how the tile interacts while being damaged.
-
-Examples:
-- standard surface clear
-- staged break
-- periodic output
-- enter-and-exit interaction
-
-Behavior definitions should be runtime-extensible.
-A future Tomb interaction should be introduced by adding behavior support, not by hacking a single variant script.
-
-## 4.4 State
-Runtime state belongs to the simulation layer.
-
-Examples:
-- locked
-- unlocked
-- claimed
-- cleared
-- rare-signaled
+## 7.4 Current lookup helper
+`BoardTileContentCatalog` builds board-facing cached lookups from `ContentRegistry`, especially variant lookup by ID for the board view.
 
 ---
 
-## 5. Networking model
+## 8. Current client world/presentation model
 
-## 5.1 Dedicated server
-The game should use a dedicated server model from the start.
-Initial internal tests may run from the developer's PC, but the architecture should be written as if deployment to a real host is expected.
+## 8.1 `ClientSandboxWorld`
+`ClientSandboxWorld` is the client-side orchestrator for the playable 3D scene.
+It currently owns:
+- world environment configuration
+- ground setup
+- board view instantiation
+- player avatar scene loading/instantiation
+- match signal wiring
+- local click-to-tile request flow
+- local movement request flow
+- camera follow updates
 
-## 5.2 Client sends intent
-Clients should send requests such as:
+## 8.2 Current interaction path
+The current tile interaction path is:
+1. mouse input intersects the board plane
+2. `BoardGridView3D.get_tile_index_from_world_position()` converts world position to tile index
+3. the client sends `request_reveal_tile(tile_index)` to `MatchSessionService`
+4. the server validates and processes reveal state
+5. changed tiles replicate back down
 
-- move to position
-- target tile
-- start action
-- stop action
-- use item
+This means click targeting depends on logical board coordinates, not on per-scene collision for each visual tile.
 
-The client should not send final truth such as:
+## 8.3 `BoardGridView3D`
+`BoardGridView3D` currently renders the board through a hybrid approach:
+- generated board base mesh
+- generated reveal underlay plane
+- generated chunk line meshes
+- scene-instanced tile visuals chosen by tile variant ID
 
-- tile HP is now X
-- tile is cleared
-- this claim belongs to me
-- I received this drop
+Important repo truth:
+- the `LockedTiles`, `UnlockedTiles`, and `ClearedTiles` `MultiMeshInstance3D` nodes still exist in the scene, but the current active tile presentation path is the scene-based tile visual path under `TileVisuals`
+- gameplay truth does **not** live in those visuals
+- tile world size is derived from runtime config (`board_view.tile_size`)
 
-## 5.3 Server validates and replicates
-The server should validate legality and then replicate the results.
+## 8.4 `BoardTileVisual`
+`BoardTileVisual` is the shared visual base class used by tile visual scenes.
+It applies tile snapshot state to content root visibility plus locked/claimed overlays.
 
-Examples:
-- whether a tile is claimable
-- whether the tile is already protected by another player's recent damage
-- whether the player is in valid range
-- how much damage was applied
-- whether adjacent tiles unlock
-- whether drops should be generated
-
-## 5.4 Recommended networking layers
-Split networking responsibilities into clear layers:
-
-### Connection layer
-- peer setup
-- version checks
-- auth/session handshake later if needed
-- disconnect handling
-
-### Session layer
-- join map
-- spawn player
-- reconnect rules
-- map selection or assignment
-
-### Gameplay replication layer
-- tile state deltas
-- player transform snapshots
-- claim changes
-- clear events
-- progress updates
-- final-rush activation
-
-### UI event layer
-- notifications
-- result packets
-- leaderboard updates
-- reveal sequence triggers
+## 8.5 Current placeholder asset strategy
+The current tile variant visuals are still placeholder scenes, but they already prove the intended swap path:
+- each tile variant can point to its own scene
+- scene visuals are selected through authored data
+- visual replacement should happen by changing defs/scenes, not by rewriting board truth
 
 ---
 
-## 6. Claim ownership model
+## 9. Current camera/player presentation model
 
-The current design calls for a simple claim timeout model.
+## 9.1 `PlayerOrbitCameraRigController`
+The camera rig controller owns the current orbit/follow camera behavior.
+Key runtime-configured concerns include:
+- follow smoothing
+- yaw rotation
+- pitch limits
+- zoom distance limits
+- near/far clip setup
+- look-at height
 
-## 6.1 Rule
-A tile remains protected from other players while it has been damaged recently enough by its owner.
-
-## 6.2 Required state
-At minimum:
-
-- `claim_owner_id`
-- `last_damage_time`
-
-## 6.3 Validation logic
-When another player attempts to target or damage the tile, the server checks:
-
-- does the tile have an owner?
-- has the claim expired?
-- is the tile now open?
-
-If the claim has expired, the tile becomes available again.
-If not, the request is rejected.
-
-## 6.4 Final-rush override
-When the late-game threshold is reached:
-
-- clear all claims
-- disable the normal exclusive-claim rule for the remaining stretch
+## 9.2 `PlayerReplicaAvatar`
+Remote and local visible player bodies are rendered through `PlayerReplicaAvatar` scenes that are updated from authoritative player snapshots.
 
 ---
 
-## 7. Board and chunk architecture
+## 10. Current known gaps and next architectural work
 
-## 7.1 Why chunking matters
-The board can become large quickly.
-A naive one-node-per-tile architecture becomes difficult to maintain and optimize as tile counts rise.
+## 10.1 Still-missing content framework slices
+The current architecture still needs:
+- role resource types
+- behavior resource types or stronger validated behavior links
+- broader tuning resources
+- content inspection/debug tools
 
-Chunking should be used as the main boundary for:
+## 10.2 Still-missing match experience slices
+The current architecture still needs:
+- map-complete presentation
+- results/contribution packaging
+- item/inventory runtime
+- reward/drop scaffolding
 
-- rendering
-- update batching
-- visibility
-- local rebuild work
-- network delta grouping
-
-## 7.2 Recommended board representation
-Use either:
-
-- a 2D array with helper indexing, or
-- a flat array with deterministic index math
-
-The key requirement is fast lookup for:
-
-- tile by coordinate
-- neighbor queries
-- chunk membership
-- unlock propagation
-- clear state checks
-
-## 7.3 Recommended chunk responsibilities
-Each chunk should manage or expose:
-
-- tile lookup range
-- visual tile presentation container
-- refresh hooks for changed tiles
-- local visibility lifecycle
-- chunk-level update batching
-
-The chunk should not become a mini-authoritative server.
-It is a runtime organization unit.
+## 10.3 Readability polish remains presentation work
+Readable targeting/highlight polish and richer environment dressing are still future work, but they should remain presentation layers on top of the current authoritative runtime model.
 
 ---
 
-## 8. Image reveal architecture
+## 11. Architecture rules for future changes
 
-## 8.1 Core idea
-The hidden image should exist as an underlayer or mapped reveal surface beneath the tile layer.
+## 11.1 Do not move board truth into tile scenes
+Tile scenes are presentation.
+`BoardState` and `TileRecord` remain the truth.
 
-Each cleared tile should reveal the corresponding region of the image.
+## 11.2 Do not hardcode future content directly into gameplay scripts
+New families, variants, roles, behaviors, tools, and charms should extend authored defs/resources and registry validation.
 
-## 8.2 Important implementation rule
-Do not couple the image reveal directly to arbitrary scene destruction logic.
-The authoritative tile state should decide whether a tile is visually present, hidden, broken, or cleared.
+## 11.3 Keep networking DTOs explicit
+Snapshot and delta payload contracts should stay explicit and versionable rather than passing arbitrary ad-hoc dictionaries between unrelated scripts.
 
-## 8.3 Resolution planning
-The project should not assume unlimited image resolution.
-Map size and tile count must be chosen intentionally.
-
-Examples:
-- 128 x 128 = 16,384 tiles
-- 256 x 256 = 65,536 tiles
-- 512 x 512 = 262,144 tiles
-
-The architecture should support larger boards later, but early versions should use a controlled map size and chunk structure.
-
----
-
-## 9. Roles, items, and content data
-
-## 9.1 Roles
-Roles should be light in terms of rule complexity but formal in data structure.
-A role definition should include at least:
-
-- stable role ID
-- display name
-- tags
-- visual identity references
-- animation package references
-- allowed tool pool or item rules
-- role marker or presentation references
-
-## 9.2 Tools
-Tools should be role-specific and carry the main rolled numerical profile.
-The technical model should allow:
-
-- stable item IDs
-- role restrictions
-- rolled stat blocks
-- future affixes and procedural generation
-- visual model references
-
-Detailed balancing can come later, but the data format should not block it.
-
-## 9.3 Charms
-Charms should be lighter and more expressive.
-The data format should support:
-
-- stable item IDs
-- tags
-- effect references
-- future utility or flavor triggers
-
-The implementation does not need to fully design charm content yet, but the item backbone should keep the path open.
-
----
-
-## 10. Camera and movement architecture
-
-## 10.1 Camera goals
-The game is 3D but should remain readable.
-The camera should support:
-
-- top-down readability
-- limited rotation or angle control
-- zoom adjustments
-- stable reveal-friendly framing
-
-## 10.2 Avoid free camera complexity
-The camera should not be fully free if that harms:
-
-- image reveal pacing
-- targeting clarity
-- map readability
-- player fairness
-
-## 10.3 Movement
-Player movement can feel free in the 3D world while still respecting grid-based interaction rules.
-Range checks, claim checks, and tile targeting logic should all depend on the logical grid and simulation rules, not purely on client-side visual assumptions.
-
----
-
-## 11. Recommended Godot project structure
-
-```text
-res://
-  autoload/
-    app_config/
-    services/
-  core/
-    events/
-    math/
-    utils/
-  data/
-    roles/
-    tile_families/
-    tile_variants/
-    tile_behaviors/
-    map_presets/
-    items/
-    tuning/
-  net/
-    protocol/
-    client/
-    server/
-  game/
-    board/
-    chunks/
-    players/
-    camera/
-    items/
-    map_flow/
-    ui/
-  scenes/
-    client/
-    server/
-    shared/
-  tests/
-  tools/
-```
-
-### Folder intent
-
-- `autoload/` for small, explicit global services only
-- `data/` for data assets and config
-- `net/` for protocol, connection, replication, authority
-- `game/` for domain systems
-- `scenes/` for scene composition, not core truth
-- `tools/` for content validators, importers, inspectors, and debug helpers
-
----
-
-## 12. Runtime modes
-
-The project should support explicit runtime modes.
-
-At minimum:
-- client mode
-- dedicated server mode
-- local debug mode if useful
-
-Mode should be selected through startup configuration or command-line arguments, not by scene hacks.
-
----
-
-## 13. Validation and tooling
-
-A data-driven project stays healthy only if invalid data fails early.
-
-Recommended validation rules:
-
-- duplicate IDs fail on startup
-- missing references fail on startup
-- invalid behavior links fail on startup
-- broken map preset references fail on startup
-- role/item/family mismatches fail loudly
-
-Useful tools:
-- content registry validator
-- map preset inspector
-- tile distribution preview tool
-- ID audit tool
-- server state debug viewer
-
----
-
-## 14. Persistence boundaries
-
-Even if persistence is minimal in early internal tests, the architecture should already distinguish between:
-
-- profile state
-- session state
-- live map state
-- archive/result state
-
-These should not be mixed into one blob.
-
-This prevents future migration pain when the project moves from local testing to more serious hosting.
-
----
-
-## 15. Guardrails against technical debt
-
-Do not allow the following patterns to become normal:
-
-- client-authoritative shortcuts for gameplay-critical events
-- scene-only ownership of tile truth
-- random hardcoded tuning values inside gameplay scripts
-- role- or family-specific special cases spread across unrelated files
-- one-off tile scripts that bypass the shared behavior model
-- editor-only assumptions that break dedicated server mode
-
----
-
-## 16. Immediate technical next step
-
-The next technical step is to implement the authoritative Phase 2 board stack on top of the current session foundation.
-
-That means locking and then building:
-- `BoardState` and `TileRecord` as runtime truth
-- authored map preset resources and board bootstrap
-- chunk partitioning helpers and index math
-- board replication DTO boundaries
-- claim timeout and final-rush state storage
-- the first presentation bridge from authoritative board data into the 3D client world
+## 11.4 Keep runtime truth separate from debug helpers
+Logs, overlays, and content inspection tools are useful, but they should observe runtime truth rather than becoming hidden dependencies for gameplay logic.

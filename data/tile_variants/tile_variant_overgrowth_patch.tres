@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="TileVariantDef" format=3]
+
+[ext_resource type="Script" path="res://data/tile_variants/TileVariantDef.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/world/board/tile_visuals/OvergrowthPatchTileVisual.tscn" id="2"]
+
+[resource]
+script = ExtResource("1")
+id = &"tile_variant.overgrowth_patch"
+display_name = "Overgrowth Patch"
+tags = PackedStringArray("tile_variant", "organic", "scene_visual")
+family_id = &"tile_family.overgrowth"
+assignment_weight = 1.0
+visual_scene = ExtResource("2")

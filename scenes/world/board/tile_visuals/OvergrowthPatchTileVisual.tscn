@@ -1,0 +1,71 @@
+[gd_scene format=3 uid="uid://ba4g1kkfnvfng"]
+
+[ext_resource type="Script" uid="uid://dpq4xdmafm8h" path="res://scenes/world/board/tile_visuals/OvergrowthPatchTileVisual.gd" id="1"]
+
+[sub_resource type="StandardMaterial3D" id="2"]
+albedo_color = Color(0.2, 0.32, 0.18, 1)
+
+[sub_resource type="BoxMesh" id="1"]
+
+[sub_resource type="StandardMaterial3D" id="4"]
+albedo_color = Color(0.36, 0.56, 0.28, 1)
+
+[sub_resource type="BoxMesh" id="3"]
+size = Vector3(0.86, 0.14, 0.86)
+
+[sub_resource type="StandardMaterial3D" id="6"]
+albedo_color = Color(0.62, 0.82, 0.48, 1)
+
+[sub_resource type="BoxMesh" id="5"]
+size = Vector3(0.18, 0.18, 0.18)
+
+[sub_resource type="StandardMaterial3D" id="8"]
+albedo_color = Color(0.07, 0.09, 0.07, 1)
+
+[sub_resource type="BoxMesh" id="7"]
+size = Vector3(1.02, 0.1, 1.02)
+
+[sub_resource type="StandardMaterial3D" id="10"]
+albedo_color = Color(0.76, 0.92, 0.34, 1)
+
+[sub_resource type="BoxMesh" id="9"]
+size = Vector3(0.42, 0.18, 0.42)
+
+[node name="OvergrowthPatchTileVisual" type="Node3D" unique_id=497058383]
+script = ExtResource("1")
+content_root_path = NodePath("ContentRoot")
+locked_overlay_path = NodePath("LockedOverlay")
+claimed_overlay_path = NodePath("ClaimedOverlay")
+
+[node name="ContentRoot" type="Node3D" parent="." unique_id=1678480216]
+
+[node name="BaseMesh" type="MeshInstance3D" parent="ContentRoot" unique_id=599650121]
+material_override = SubResource("2")
+mesh = SubResource("1")
+
+[node name="TopPatchMesh" type="MeshInstance3D" parent="ContentRoot" unique_id=294906282]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.58, 0)
+material_override = SubResource("4")
+mesh = SubResource("3")
+
+[node name="BudMeshA" type="MeshInstance3D" parent="ContentRoot" unique_id=1659271737]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.22, 0.69, -0.18)
+material_override = SubResource("6")
+mesh = SubResource("5")
+
+[node name="BudMeshB" type="MeshInstance3D" parent="ContentRoot" unique_id=1266506805]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.18, 0.64, 0.2)
+material_override = SubResource("6")
+mesh = SubResource("5")
+
+[node name="LockedOverlay" type="MeshInstance3D" parent="." unique_id=96321281]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.56, 0)
+visible = false
+material_override = SubResource("8")
+mesh = SubResource("7")
+
+[node name="ClaimedOverlay" type="MeshInstance3D" parent="." unique_id=1223522959]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
+visible = false
+material_override = SubResource("10")
+mesh = SubResource("9")

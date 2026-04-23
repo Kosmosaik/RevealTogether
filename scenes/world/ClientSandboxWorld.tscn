@@ -1,22 +1,22 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://bjba1kux0b5i4"]
 
-[ext_resource type="Script" path="res://scenes/world/ClientSandboxWorld.gd" id="1"]
+[ext_resource type="Script" uid="uid://db548po28qhq8" path="res://scenes/world/ClientSandboxWorld.gd" id="1"]
 
-[node name="ClientSandboxWorld" type="Node3D"]
+[node name="ClientSandboxWorld" type="Node3D" unique_id=387371873]
 script = ExtResource("1")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=2002057416]
 
-[node name="SunLight" type="DirectionalLight3D" parent="."]
+[node name="SunLight" type="DirectionalLight3D" parent="." unique_id=771296407]
 
-[node name="Ground" type="StaticBody3D" parent="."]
+[node name="Ground" type="StaticBody3D" parent="." unique_id=1798549274]
 
-[node name="GroundMesh" type="MeshInstance3D" parent="Ground"]
+[node name="GroundMesh" type="MeshInstance3D" parent="Ground" unique_id=625337022]
 
-[node name="GroundCollisionShape" type="CollisionShape3D" parent="Ground"]
+[node name="GroundCollisionShape" type="CollisionShape3D" parent="Ground" unique_id=511705919]
 
-[node name="PlayerReplicas" type="Node3D" parent="."]
+[node name="PlayerReplicas" type="Node3D" parent="." unique_id=738259377]
 
-[node name="CameraRig" type="Node3D" parent="."]
+[node name="CameraRig" type="Node3D" parent="." unique_id=1121959790]
 
-[node name="Camera3D" type="Camera3D" parent="CameraRig"]
+[node name="Camera3D" type="Camera3D" parent="CameraRig" unique_id=1098312838]

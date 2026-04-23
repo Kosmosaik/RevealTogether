@@ -163,6 +163,28 @@ func request_reveal_tile(tile_index: int) -> void:
 	var request_payload: Dictionary = ConnectionDtos.build_reveal_tile_request_payload(_local_joined_match_id, tile_index)
 	rpc_id(NetProtocol.SERVER_PEER_ID, "rpc_receive_reveal_tile_request", request_payload)
 
+func request_player_transform(
+	world_position: Vector3,
+	world_yaw_radians: float,
+	current_action_state: StringName,
+	current_targeted_tile_index: int = -1
+) -> void:
+	if _service_mode != &"client":
+		return
+
+	if _local_joined_match_id.is_empty():
+		LogService.debug("NET", "Player transform request ignored because no match has been joined yet.")
+		return
+
+	var request_payload: Dictionary = ConnectionDtos.build_player_transform_request_payload(
+		_local_joined_match_id,
+		world_position,
+		world_yaw_radians,
+		current_action_state,
+		current_targeted_tile_index
+	)
+	rpc_id(NetProtocol.SERVER_PEER_ID, "rpc_receive_player_transform_request", request_payload)
+
 func _process(delta: float) -> void:
 	if _service_mode != &"server":
 		return
@@ -510,9 +532,87 @@ func rpc_receive_player_transform_replication(replication_payload: Dictionary) -
 		_local_player_snapshot_by_peer_id[peer_id] = merged_snapshot
 
 	player_transforms_replicated.emit(replication_payload)
-	
-@rpc("any_peer", "call_remote", "reliable", NetProtocol.GAMEPLAY_CHANNEL)
 
+@rpc("any_peer", "call_remote", "unreliable_ordered", NetProtocol.GAMEPLAY_CHANNEL)
+func rpc_receive_player_transform_request(request_payload: Dictionary) -> void:
+	if not multiplayer.is_server():
+		return
+
+	var sender_peer_id: int = multiplayer.get_remote_sender_id()
+	if sender_peer_id <= 0:
+		return
+
+	if _match_state == null:
+		return
+
+	if not _handshake_approved_by_peer_id.has(sender_peer_id):
+		LogService.warn("NET", "Rejected player transform request from peer %s before handshake approval." % sender_peer_id)
+		return
+
+	var requested_match_id: String = str(request_payload.get("match_id", ""))
+	if requested_match_id != _match_state.match_id:
+		LogService.warn("NET", "Rejected player transform request from peer %s for unexpected match '%s'." % [sender_peer_id, requested_match_id])
+		return
+
+	if not _match_state.has_player_state(sender_peer_id):
+		LogService.warn("NET", "Rejected player transform request from unknown player peer %s." % sender_peer_id)
+		return
+
+	var player_state: MatchPlayerState = _match_state.get_player_state(sender_peer_id)
+	if player_state == null:
+		return
+
+	var requested_world_position: Vector3 = request_payload.get("world_position", player_state.world_position)
+	var requested_world_yaw_radians: float = float(request_payload.get("world_yaw_radians", player_state.world_yaw_radians))
+	var requested_action_state: StringName = StringName(
+		str(request_payload.get("current_action_state", String(NetProtocol.ACTION_STATE_IDLE)))
+	)
+
+	var authoritative_timestamp_ms: int = int(Time.get_unix_time_from_system() * 1000.0)
+	var elapsed_sec: float = _get_server_movement_request_window_sec()
+	if player_state.last_input_tick > 0:
+		elapsed_sec = clampf(
+			float(authoritative_timestamp_ms - player_state.last_input_tick) / 1000.0,
+			0.016,
+			_get_server_movement_request_window_sec()
+		)
+
+	var move_delta: Vector3 = requested_world_position - player_state.world_position
+	move_delta.y = 0.0
+
+	var max_move_distance: float = (
+		_get_player_move_speed_units_per_sec()
+		* elapsed_sec
+		* _get_server_speed_tolerance_multiplier()
+	)
+	if move_delta.length() > max_move_distance and max_move_distance >= 0.0:
+		move_delta = move_delta.normalized() * max_move_distance
+
+	var next_world_position: Vector3 = player_state.world_position + move_delta
+	next_world_position.y = player_state.world_position.y
+	next_world_position = _clamp_world_position_to_match_bounds(next_world_position)
+
+	player_state.world_position = next_world_position
+
+	var did_move_this_request: bool = move_delta.length_squared() > 0.000001
+	if requested_action_state == NetProtocol.ACTION_STATE_MOVING:
+		player_state.current_targeted_tile_index = -1
+
+		if did_move_this_request:
+			player_state.world_yaw_radians = requested_world_yaw_radians
+			player_state.current_action_state = NetProtocol.ACTION_STATE_MOVING
+
+			if _match_state.state == NetProtocol.MATCH_STATE_WAITING_FOR_PLAYERS:
+				_match_state.state = NetProtocol.MATCH_STATE_ACTIVE
+		else:
+			player_state.current_action_state = NetProtocol.ACTION_STATE_IDLE
+	elif player_state.current_action_state == NetProtocol.ACTION_STATE_MOVING:
+		player_state.current_action_state = NetProtocol.ACTION_STATE_IDLE
+		player_state.current_targeted_tile_index = -1
+
+	player_state.last_input_tick = authoritative_timestamp_ms
+
+@rpc("any_peer", "call_remote", "reliable", NetProtocol.GAMEPLAY_CHANNEL)
 func rpc_receive_reveal_tile_request(request_payload: Dictionary) -> void:
 	if not multiplayer.is_server():
 		return
@@ -574,6 +674,58 @@ func rpc_receive_board_delta(replication_payload: Dictionary) -> void:
 		return
 
 	board_delta_replicated.emit(replication_payload)
+
+func _get_player_move_speed_units_per_sec() -> float:
+	return max(RuntimeConfig.get_float("movement", "move_speed_units_per_sec", 6.0), 0.1)
+
+func _get_server_movement_request_window_sec() -> float:
+	return max(RuntimeConfig.get_float("movement", "server_max_request_window_sec", 0.20), 0.016)
+
+func _get_server_speed_tolerance_multiplier() -> float:
+	return max(RuntimeConfig.get_float("movement", "server_speed_tolerance_multiplier", 1.25), 1.0)
+
+func _clamp_world_position_to_match_bounds(world_position: Vector3) -> Vector3:
+	var clamped_world_position: Vector3 = world_position
+	var half_extents: Vector2 = _get_match_ground_half_extents()
+	var body_radius: float = max(RuntimeConfig.get_float("client_world", "player_body_radius", 0.45), 0.1)
+
+	var clamp_limit_x: float = max(half_extents.x - body_radius, 0.0)
+	var clamp_limit_z: float = max(half_extents.y - body_radius, 0.0)
+
+	clamped_world_position.x = clampf(clamped_world_position.x, -clamp_limit_x, clamp_limit_x)
+	clamped_world_position.z = clampf(clamped_world_position.z, -clamp_limit_z, clamp_limit_z)
+	return clamped_world_position
+
+func _get_match_ground_half_extents() -> Vector2:
+	var default_ground_size: float = max(RuntimeConfig.get_float("client_world", "ground_size", 64.0), 8.0)
+	var ground_size_x: float = max(
+		RuntimeConfig.get_float("client_world", "ground_size_x", default_ground_size),
+		8.0
+	)
+	var ground_size_z: float = max(
+		RuntimeConfig.get_float("client_world", "ground_size_z", default_ground_size),
+		8.0
+	)
+
+	if _match_state != null and _match_state.board_state != null:
+		var tile_size: float = max(RuntimeConfig.get_float("board_view", "tile_size", 1.0), 0.01)
+		var tile_gap: float = max(RuntimeConfig.get_float("board_view", "tile_gap", 0.0), 0.0)
+		var ground_margin: float = max(RuntimeConfig.get_float("board_view", "ground_margin", 8.0), 0.0)
+		var tile_stride: float = tile_size + tile_gap
+
+		var minimum_world_size_x: float = max(
+			(float(_match_state.board_state.board_width) * tile_stride) - tile_gap,
+			0.0
+		) + ground_margin
+		var minimum_world_size_z: float = max(
+			(float(_match_state.board_state.board_height) * tile_stride) - tile_gap,
+			0.0
+		) + ground_margin
+
+		ground_size_x = max(ground_size_x, minimum_world_size_x)
+		ground_size_z = max(ground_size_z, minimum_world_size_z)
+
+	return Vector2(ground_size_x * 0.5, ground_size_z * 0.5)
 
 func _allocate_spawn_slot_for_peer(peer_id: int) -> int:
 	if _server_spawn_slot_by_peer_id.has(peer_id):

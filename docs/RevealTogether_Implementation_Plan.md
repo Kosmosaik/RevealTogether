@@ -2,389 +2,292 @@
 
 ## Purpose
 
-This document defines the recommended order of implementation for **RevealTogether**.
-The plan is intentionally structured to protect the project from early shortcuts that later cause refactors.
+This document tracks the recommended implementation order for **RevealTogether** and marks what is already true in the current repo.
 
-The priority is to build stable foundations first:
-
-- architecture before content depth
+The priority remains:
 - authority before polish
-- data boundaries before item complexity
-- map flow before secondary systems
+- stable runtime boundaries before feature depth
+- data-driven extension points before content explosion
+- reusable systems before one-off hacks
 
 ---
 
-## Current status snapshot (2026-04-20)
+## Current status snapshot (2026-04-23)
 
-The current repo state has completed the foundational startup and multiplayer loop work.
+The repo is currently beyond the original Phase 1 starting point.
 
 ### Completed in code
-- **Phase 0** is complete: project structure, runtime modes, config loading, logging, content registry bootstrap, and startup validation are all present.
-- **Phase 1** is complete: dedicated server boot, client connect flow, hello ack/reject, join snapshot/reject, player spawn/despawn, and basic server-driven transform snapshot replication are implemented.
+- **Phase 0** is complete: project skeleton, runtime modes, config loading, logging, autoload bootstrap, content registry, and startup validation all exist.
+- **Phase 1** is complete: dedicated server/client/local debug boot paths, hello/join flow, player spawn/despawn, and transform replication are implemented.
+- **Phase 2** is complete: authoritative board state, tile claims, timed reveal ticks, clear/unlock propagation, hidden-image reveal, and final-rush transition are implemented.
+- **Phase 3** is functionally complete for the current placeholder milestone: 3D movement, orbit camera, zoom, and world interaction are implemented.
+
+### In progress in code
+- **Phase 4** is partially complete: map preset assets, tile family assets, tile variant assets, visual scene references, registry loading, and validation exist.
+- The remaining missing part of Phase 4 is broader authored content framework coverage such as roles, tile behavior assets, tuning assets, and content inspection tooling.
 
 ### Current repo truth
-- The project already boots in `client`, `dedicated_server`, and `local_debug` runtime modes.
-- `AppBootstrap`, `RuntimeConfig`, `LogService`, and `ContentRegistry` are established autoload foundations.
-- `MatchSessionService` owns the current connection/session flow and authoritative player-session state.
-- The client currently proves the network foundation through the sandbox world and replica avatar layer.
+- The current playable loop is already a real server-authoritative shared board match.
+- The board is no longer only a placeholder logic idea.
+- Placeholder tile visuals are already being chosen through data-backed tile variant definitions.
+- Readable targeting polish was intentionally deferred during the current asset-swap slice.
 
-### Next phase
-The project should now move into **Phase 2 - Board and reveal core**. That is the next major milestone worth branching for.
+### Recommended next milestone
+**Finish the remaining Phase 4 work before moving fully into Phase 5.**
 
----
-
-## 1. Implementation strategy
-
-The project should be built in phases.
-Each phase must leave the codebase in a cleaner and more extensible state than before.
-
-Important rule:
-
-**Do not solve early progress with throwaway systems that are known to be incompatible with the final architecture.**
-
-That means:
-- no fake local-only authority for core board logic
-- no giant single-scene prototype that later needs to be broken apart completely
-- no hardcoding content definitions directly into gameplay scripts when those systems are already known to be data-driven later
+That means the next branch should focus on:
+- role definitions
+- tile behavior definitions or behavior-link resources
+- tuning/content resources that remove more gameplay assumptions from scripts
+- lightweight content inspection/debug tooling
 
 ---
 
-## 2. Phase overview
+## 1. Phase overview
 
 ## Phase 0 - Project skeleton
-**Status:** Complete in the current repo state.
+**Status:** Complete.
 
 ### Goal
 Create the permanent project structure and startup model.
 
-### Main work
-- create the Godot folder structure
-- define runtime modes
-- add autoload bootstrap layer
-- add config loading
-- add logging strategy
-- add content registry bootstrap
-- add startup validation framework
-
-### Exit criteria
-- project runs in clean client mode
-- project runs in clean dedicated server mode
+### Exit criteria met
+- runtime modes exist
 - startup validation works
 - content IDs can be registered and checked
-
-### Why this phase matters
-This phase prevents the project from turning into a pile of disconnected experiment scripts.
+- autoload bootstrap foundations are in place
 
 ---
 
 ## Phase 1 - Dedicated server loop
-**Status:** Complete in the current repo state.
+**Status:** Complete.
 
 ### Goal
 Prove the multiplayer foundation with real connections.
 
-### Main work
-- create dedicated server entry path
-- create client connect flow
-- establish map/session join flow
-- create player spawn path
-- implement disconnect handling
-- implement basic server-driven player replication
-
-### Exit criteria
-- multiple friends can connect to the server running on the developer PC
+### Exit criteria met
+- clients can connect to the server
 - players spawn consistently
-- disconnects do not corrupt the session
-- server clearly owns authoritative session state
-
-### Notes
-This phase should be tested over the intended temporary public-IP setup.
+- disconnect handling exists
+- the server owns authoritative session state
 
 ---
 
 ## Phase 2 - Board and reveal core
-**Status:** Next active implementation phase.
+**Status:** Complete.
 
 ### Goal
 Implement the full playable board loop.
 
-### Main work
-- create logical board data structure
-- create tile records
-- implement chunk partitioning
-- bind hidden image underlay to the board
-- implement unlock seeds
-- implement claim timeout rule
-- implement tile damage and clear
-- implement adjacent unlock propagation
-- implement end-of-map detection
-- implement final-rush claim removal
-
-### Exit criteria
+### Exit criteria met
 - a full map can be started and completed
-- claims behave correctly
-- tile progress persists correctly
-- hidden image reveal works correctly
-- final-rush transition works correctly
+- claims exist and expire on timeout
+- tile progress persists in authoritative board state
+- hidden-image reveal underlay works
+- final-rush transition exists
 
-### Why this phase matters
-This is the project’s real gameplay heart.
-Everything else should build on top of this.
+### Repo notes
+The current board runtime is built around `BoardState`, `TileRecord`, `ChunkState`, `BoardBuilder`, and `BoardActionService`.
+Board state is replicated by snapshot on join and by changed-tile delta afterward.
 
 ---
 
 ## Phase 3 - 3D player controller and camera
+**Status:** Complete for the current placeholder milestone.
+
 ### Goal
 Make the game feel right in its intended 3D form.
 
-### Main work
-- implement player controller in 3D space
-- implement tile targeting feedback
-- implement constrained top-down camera
-- implement zoom levels
-- implement limited angle or rotation options
-- implement visible nearby players
-- implement enough world dressing to validate readability
+### Exit criteria currently satisfied
+- players move in 3D space with server-approved transform requests
+- orbit camera and zoom are in place
+- nearby players are visible through replica avatars
+- board interaction works through world-to-grid conversion
 
-### Exit criteria
-- the game is readable in 3D
-- targeting is clear
-- map movement feels good
-- final reveal still feels meaningful
-- camera does not break the reveal loop
+### Deferred inside this phase
+These are intentionally still light or unfinished:
+- stronger readable targeting feedback
+- final art readability polish
+- richer world dressing
 
-### Why this phase matters
-The project is not just a board simulation.
-It needs to feel like a 3D social multiplayer game.
+That deferred work should be treated as later presentation polish unless it blocks usability.
 
 ---
 
 ## Phase 4 - Data-driven content framework
+**Status:** In progress.
+
 ### Goal
 Move content assumptions out of gameplay code.
 
-### Main work
+### Already complete in this phase
+- `MapPresetDef` resources exist
+- `TileFamilyDef` resources exist
+- `TileVariantDef` resources exist
+- tile variants can point at authored visual scenes
+- `ContentRegistry` loads these assets from configured content directories
+- `StartupValidator` validates IDs and cross-references for the currently supported content types
+
+### Remaining work in this phase
 - define role data assets
-- define tile family data assets
-- define tile variant data assets
-- define behavior definitions or behavior links
-- define map preset data assets
-- add registry validation for all major content types
-- add basic content inspection tools
+- define tile behavior assets or equivalent links
+- move more tuning into authored resources where appropriate
+- add lightweight content inspection/debug tooling
+- widen validation coverage as more content domains come online
 
-### Exit criteria
+### Exit criteria for full completion
 - roles can be added through data
-- new tile variants can be added through data
-- map presets can be changed without rewriting core board code
-- validation catches broken content early
-
-### Why this phase matters
-This is the phase that turns the project from a prototype into a framework.
+- tile families/variants/map presets are all data-authored and validated
+- behavior links are validated cleanly
+- content authors can inspect the loaded content state without digging through runtime code
 
 ---
 
 ## Phase 5 - Tool, charm, and inventory scaffolding
+**Status:** Not started.
+
 ### Goal
 Create the backbone for items without over-designing final loot balance.
 
 ### Main work
 - define item base structures
 - define Tool and Charm data models
-- define inventory ownership and storage rules
+- implement inventory ownership/state
 - implement server-approved item grants
-- add drop hooks from tile clear events
-- add placeholder UI for basic item visibility
-
-### Exit criteria
-- tools can exist as role-specific data-backed items
-- charms can exist as separate utility items
-- inventory can hold drops
-- item ownership is server-approved
+- connect tile clear events to future drop hooks
+- add placeholder UI for item visibility
 
 ### Important note
-This phase should create the structure, not the final content depth.
-Detailed charm effects and full item balancing can wait.
+This phase should create the structure, not the final item depth.
 
 ---
 
 ## Phase 6 - Map progression feedback and results
+**Status:** Not started.
+
 ### Goal
 Add the first satisfying full-match outcome layer.
 
 ### Main work
-- add global map progress tracking
-- add progress milestone events
-- add late-game phase signaling
-- add results screen
-- add final reveal sequence
-- add contribution statistics package
-- add archive-ready result output structure
-
-### Exit criteria
-- players receive a proper map completion sequence
-- results are server-produced and consistent
-- end-of-map data can be stored or reused later
-
-### Why this phase matters
-This is where the game starts to feel complete, not just functional.
+- global map progress tracking and presentation
+- map-complete sequence
+- contribution/result packaging
+- results UI and final reveal framing
+- archive-ready output structure for later reuse
 
 ---
 
 ## Phase 7 - Internal hardening
+**Status:** Not started.
+
 ### Goal
-Prepare the build for more serious testing and eventual migration to a proper host.
+Prepare the build for heavier internal testing.
 
 ### Main work
-- profile chunk updates
 - profile board update cost
-- test reconnect edge cases
-- test map reset correctness
+- profile tile visual update cost
+- test reconnect and reset paths
 - improve debug visibility
-- improve logging
-- validate runtime mode setup
-- remove accidental local-only assumptions
-
-### Exit criteria
-- internal sessions are stable enough to trust
-- server crashes and desyncs are reduced
-- moving off the developer PC later is straightforward
+- improve logging and validation coverage
+- reduce accidental local-only assumptions
 
 ---
 
-## 3. Suggested detailed work order inside early phases
+## 2. Recommended immediate work order
 
-## 3.1 Recommended order before any deep gameplay extras
-1. project skeleton
-2. dedicated server startup
-3. client connect and spawn
-4. logical board data model
-5. tile claim and damage validation
-6. tile clear and unlock propagation
-7. hidden image reveal
-8. final-rush phase
-9. 3D camera and movement
-10. data-driven registries
-
-Only after this should the project spend serious time on:
-- richer tile behaviors
-- deeper item design
-- expanded role set
-- more advanced progression systems
+1. Finish the remaining **Phase 4** content framework work.
+2. Move into **Phase 5** item/equipment scaffolding.
+3. Build **Phase 6** map-complete/results flow.
+4. Use **Phase 7** to harden the playable loop before broader internal testing.
 
 ---
 
-## 4. Team discipline rules during implementation
-
-## 4.1 No temporary architecture that is known to be wrong
-If a shortcut conflicts with the intended architecture, do not normalize it just because it is faster in the moment.
-
-## 4.2 Every new system must declare ownership
-For every new feature, answer:
-- who owns the data?
-- who validates the action?
-- who renders the result?
-- where does tuning live?
-
-## 4.3 Data must be validated early
-Do not allow broken IDs, missing references, or invalid links to survive into runtime silently.
-
-## 4.4 New features should plug into frameworks
-Do not implement future Tomb-style tile behavior, new roles, or special items by patching random central files.
-Use the extension structure deliberately.
-
----
-
-## 5. Deliverables by milestone
+## 3. Milestone summary
 
 ## Milestone A - Server-connected sandbox
-Deliverables:
-- dedicated server running
-- multiple clients connected
-- visible player presence
-- clean join and disconnect handling
+**Status:** Reached.
 
-## Milestone B - Fully playable map loop
-Deliverables:
+Includes:
+- server boot
+- client join flow
+- visible player presence
+- basic transform replication
+
+## Milestone B - Fully playable shared board loop
+**Status:** Reached.
+
+Includes:
 - map start
 - unlock progression
 - claim timeout
 - tile clearing
-- image reveal
-- map completion
+- hidden-image reveal
+- final-rush transition
 
 ## Milestone C - 3D feel validation
-Deliverables:
-- top-down 3D controller
-- constrained camera
-- readable tile targeting
+**Status:** Reached for current placeholder scope.
+
+Includes:
+- 3D controller
+- orbit camera and zoom
+- world interaction with the board
 - visible social presence
 
+Deferred polish:
+- stronger targeting readability
+- better asset readability and environment dressing
+
 ## Milestone D - Data-driven framework validation
-Deliverables:
-- role definitions loaded from data
-- tile family and variant definitions loaded from data
+**Status:** Partially reached.
+
+Already present:
 - map presets loaded from data
-- validation tools working
+- tile families loaded from data
+- tile variants loaded from data
+- startup validation for supported content
+
+Still missing:
+- role definitions
+- behavior definitions
+- broader tuning resources
+- content inspection/debug utilities
 
 ## Milestone E - Item backbone
-Deliverables:
-- Tool and Charm data structures
-- inventory scaffold
-- server-driven item grants
-- placeholder item UI
+**Status:** Not started.
 
 ## Milestone F - Internal test candidate
-Deliverables:
-- stable results flow
-- debug visibility
-- hardening pass
-- reproducible server startup process
+**Status:** Not started.
 
 ---
 
-## 6. Success criteria for the first serious internal build
+## 4. Discipline rules that still apply
 
-The first serious internal build should satisfy all of the following:
+## 4.1 Do not backslide into hardcoded gameplay content
+IDs, authored content links, and tuning values that belong in defs/resources should keep moving out of gameplay scripts.
 
-- friends can connect over the dedicated server setup reliably
-- board state remains synchronized
-- claims obey the server timeout rule consistently
-- a map can be played from start to finish without soft lock
-- image reveal works correctly and feels meaningful
-- code and content remain organized by domain rather than by prototype leftovers
-- the project is ready to accept more content without structural rewrites
+## 4.2 Separate runtime truth from presentation
+The board, claims, clear state, and unlock rules belong to the authoritative runtime.
+Visual scenes and overlays should only render that truth.
 
----
+## 4.3 Extend through framework hooks
+New tile families, future roles, items, and behavior types should plug into the existing content/runtime structure rather than patching central scripts with special cases.
 
-## 7. Risks to watch early
-
-## 7.1 Overbuilding visual content before framework maturity
-Do not spend too much time on detailed tile behaviors, charm designs, or special item flavor before the board and data model are stable.
-
-## 7.2 One-node-per-tile assumptions
-A naive tile scene approach can become difficult to scale.
-Chunk-aware architecture should come early.
-
-## 7.3 Local test assumptions becoming permanent
-Testing on the developer PC is fine.
-Hardcoding the project around that environment is not.
-
-## 7.4 Client-authoritative convenience
-These shortcuts feel productive early and become expensive later.
-Avoid them.
+## 4.4 Treat placeholder visuals as temporary presentation, not gameplay truth
+The current scene-based placeholder tiles prove the asset-swap path.
+They should not become an excuse to move gameplay ownership into visual scenes.
 
 ---
 
-## 8. Immediate next artifact after Phase 1
+## 5. Practical next-branch target
 
-After completing Phase 1, the most useful next artifact is:
+The cleanest next branch is:
 
-**a Phase 2 board-and-reveal runtime breakdown**
+**Phase 4 completion branch**
 
-That should lock the next implementation slice for:
-- `BoardState` and `TileRecord` runtime contracts
-- authored map preset structure and board bootstrap flow
-- chunk partitioning and index helpers
-- claim timeout and final-rush state hooks
-- board replication DTO boundaries
-- first board presentation bridge and debug overlays
+Suggested scope:
+- add the first `RoleDef` resource type and registry support
+- add behavior-definition support or explicit validated behavior links
+- move more board/content tuning into authored resources where it belongs
+- add a simple debug/content-inspection surface for loaded defs
+
+That keeps the project aligned with the long-term architecture and makes the later item phase safer.

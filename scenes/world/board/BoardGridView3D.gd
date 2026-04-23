@@ -2,10 +2,8 @@ extends Node3D
 class_name BoardGridView3D
 
 const DEFAULT_BOARD_BASE_COLOR := Color(0.10, 0.13, 0.16, 1.0)
-const DEFAULT_LOCKED_TILE_COLOR := Color(0.18, 0.22, 0.27, 1.0)
-const DEFAULT_UNLOCKED_TILE_COLOR := Color(0.41, 0.67, 0.36, 1.0)
-const DEFAULT_CLEARED_TILE_COLOR := Color(0.28, 0.31, 0.36, 1.0)
 const DEFAULT_CHUNK_LINE_COLOR := Color(0.58, 0.64, 0.72, 1.0)
+const TILE_VISUAL_ROOT_NODE_NAME := "TileVisuals"
 
 @onready var _board_base_mesh_instance: MeshInstance3D = $BoardBase
 @onready var _locked_tiles_multimesh_instance: MultiMeshInstance3D = $LockedTiles
@@ -16,9 +14,17 @@ const DEFAULT_CHUNK_LINE_COLOR := Color(0.58, 0.64, 0.72, 1.0)
 var _current_board_summary: Dictionary = {}
 var _current_board_world_size: Vector2 = Vector2.ZERO
 var _tile_snapshot_by_index: Dictionary = {}
+var _tile_visual_by_index: Dictionary = {}
 var _reveal_underlay_mesh_instance: MeshInstance3D = null
+var _tile_visual_root: Node3D = null
+var _tile_variant_def_by_id: Dictionary = {}
 
 func _ready() -> void:
+	_tile_variant_def_by_id = BoardTileContentCatalog.build_variant_by_id()
+	_ensure_tile_visual_root()
+	_locked_tiles_multimesh_instance.visible = false
+	_unlocked_tiles_multimesh_instance.visible = false
+	_cleared_tiles_multimesh_instance.visible = false
 	clear_board_visuals()
 
 func apply_board_snapshot(board_snapshot: Dictionary) -> void:
@@ -41,6 +47,7 @@ func apply_board_snapshot(board_snapshot: Dictionary) -> void:
 
 func apply_board_delta_payload(board_delta_payload: Dictionary) -> void:
 	var board_summary_changed: bool = false
+	var board_layout_changed: bool = false
 
 	var board_summary: Dictionary = board_delta_payload.get("board_summary", {})
 	if not board_summary.is_empty():
@@ -54,6 +61,7 @@ func apply_board_delta_payload(board_delta_payload: Dictionary) -> void:
 
 		if updated_board_world_size != _current_board_world_size:
 			_current_board_world_size = updated_board_world_size
+			board_layout_changed = true
 			_rebuild_board_base()
 			_rebuild_chunk_lines()
 		else:
@@ -67,7 +75,12 @@ func apply_board_delta_payload(board_delta_payload: Dictionary) -> void:
 		return
 
 	_store_tile_snapshots(changed_tiles, false)
-	_rebuild_tiles(_build_sorted_tile_snapshot_list())
+
+	if board_layout_changed:
+		_rebuild_tiles(_build_sorted_tile_snapshot_list())
+		return
+
+	_apply_tile_visuals(_build_cached_tile_snapshot_list(changed_tiles))
 
 func get_tile_index_from_world_position(world_position: Vector3) -> int:
 	if _current_board_summary.is_empty():
@@ -129,7 +142,6 @@ func _store_tile_snapshots(tile_snapshot_list: Array, replace_existing: bool) ->
 
 		_tile_snapshot_by_index[tile_index] = cached_tile_snapshot
 
-
 func _build_sorted_tile_snapshot_list() -> Array[Dictionary]:
 	var tile_indices: Array = _tile_snapshot_by_index.keys()
 	tile_indices.sort()
@@ -145,12 +157,32 @@ func _build_sorted_tile_snapshot_list() -> Array[Dictionary]:
 
 	return sorted_tile_snapshot_list
 
+func _build_cached_tile_snapshot_list(tile_delta_payload_list: Array) -> Array[Dictionary]:
+	var tile_snapshot_list: Array[Dictionary] = []
+
+	for tile_delta_payload_variant in tile_delta_payload_list:
+		var tile_delta_payload: Dictionary = tile_delta_payload_variant
+		if tile_delta_payload.is_empty():
+			continue
+
+		var tile_index: int = int(tile_delta_payload.get("tile_index", -1))
+		if tile_index < 0:
+			continue
+		if not _tile_snapshot_by_index.has(tile_index):
+			continue
+
+		var tile_snapshot: Dictionary = _tile_snapshot_by_index[tile_index]
+		tile_snapshot_list.append(tile_snapshot)
+
+	return tile_snapshot_list
+
 func clear_board_visuals() -> void:
 	_clear_multimesh_instance(_locked_tiles_multimesh_instance)
 	_clear_multimesh_instance(_unlocked_tiles_multimesh_instance)
 	_clear_multimesh_instance(_cleared_tiles_multimesh_instance)
 	_clear_chunk_lines()
 	_clear_reveal_underlay()
+	_clear_tile_visuals()
 
 	_board_base_mesh_instance.mesh = null
 	_current_board_summary.clear()
@@ -191,7 +223,6 @@ func _clear_reveal_underlay() -> void:
 	_reveal_underlay_mesh_instance.mesh = null
 	_reveal_underlay_mesh_instance.material_override = null
 	_reveal_underlay_mesh_instance.visible = false
-
 
 func _rebuild_reveal_underlay() -> void:
 	var show_reveal_underlay: bool = RuntimeConfig.get_bool("board_view", "show_reveal_underlay", true)
@@ -248,91 +279,131 @@ func _rebuild_reveal_underlay() -> void:
 	_reveal_underlay_mesh_instance.visible = true
 
 func _rebuild_tiles(tile_snapshot_list: Array) -> void:
-	var locked_tile_positions: Array[Vector3] = []
-	var unlocked_tile_positions: Array[Vector3] = []
-	var cleared_tile_positions: Array[Vector3] = []
+	_clear_multimesh_instance(_locked_tiles_multimesh_instance)
+	_clear_multimesh_instance(_unlocked_tiles_multimesh_instance)
+	_clear_multimesh_instance(_cleared_tiles_multimesh_instance)
+	_rebuild_tile_visuals(tile_snapshot_list)
 
-	for tile_snapshot_variant: Variant in tile_snapshot_list:
+func _rebuild_tile_visuals(tile_snapshot_list: Array) -> void:
+	var tile_indices_to_keep: Dictionary = {}
+
+	for tile_snapshot_variant in tile_snapshot_list:
 		var tile_snapshot: Dictionary = tile_snapshot_variant as Dictionary
-		var tile_center_world_position: Vector3 = _build_tile_center_world_position(
-			int(tile_snapshot.get("grid_x", 0)),
-			int(tile_snapshot.get("grid_y", 0))
-		)
+		if tile_snapshot.is_empty():
+			continue
 
-		var is_cleared: bool = bool(tile_snapshot.get("is_cleared", false))
-		var is_unlocked: bool = bool(tile_snapshot.get("is_unlocked", false))
+		var tile_index: int = int(tile_snapshot.get("tile_index", -1))
+		if tile_index < 0:
+			continue
 
-		if is_cleared:
-			cleared_tile_positions.append(tile_center_world_position)
-		elif is_unlocked:
-			unlocked_tile_positions.append(tile_center_world_position)
-		else:
-			locked_tile_positions.append(tile_center_world_position)
+		tile_indices_to_keep[tile_index] = true
+		_apply_tile_visual(tile_snapshot)
 
-	var tile_height: float = _get_tile_size()
-	var cleared_tile_height: float = tile_height * 0.1
-	var reveal_underlay_is_visible: bool = _reveal_underlay_mesh_instance != null and _reveal_underlay_mesh_instance.visible
+	var existing_tile_indices: Array = _tile_visual_by_index.keys()
+	for tile_index_variant in existing_tile_indices:
+		var tile_index: int = int(tile_index_variant)
+		if tile_indices_to_keep.has(tile_index):
+			continue
+		_remove_tile_visual(tile_index)
 
-	var show_cleared_tiles: bool = false
-	if reveal_underlay_is_visible:
-		show_cleared_tiles = RuntimeConfig.get_bool("board_view", "show_cleared_tiles_with_underlay", false)
-	else:
-		show_cleared_tiles = RuntimeConfig.get_bool("board_view", "show_cleared_tiles_without_underlay", true)
+func _apply_tile_visuals(tile_snapshot_list: Array) -> void:
+	for tile_snapshot_variant in tile_snapshot_list:
+		var tile_snapshot: Dictionary = tile_snapshot_variant as Dictionary
+		if tile_snapshot.is_empty():
+			continue
+		_apply_tile_visual(tile_snapshot)
 
-	_apply_tile_group(
-		_locked_tiles_multimesh_instance,
-		locked_tile_positions,
-		tile_height,
-		DEFAULT_LOCKED_TILE_COLOR
-	)
-	_apply_tile_group(
-		_unlocked_tiles_multimesh_instance,
-		unlocked_tile_positions,
-		tile_height,
-		DEFAULT_UNLOCKED_TILE_COLOR
-	)
-
-	if show_cleared_tiles:
-		_apply_tile_group(
-			_cleared_tiles_multimesh_instance,
-			cleared_tile_positions,
-			cleared_tile_height,
-			DEFAULT_CLEARED_TILE_COLOR
-		)
-	else:
-		_clear_multimesh_instance(_cleared_tiles_multimesh_instance)
-
-func _apply_tile_group(
-	target_multimesh_instance: MultiMeshInstance3D,
-	tile_center_positions: Array[Vector3],
-	tile_height: float,
-	tile_color: Color
-) -> void:
-	if tile_center_positions.is_empty():
-		_clear_multimesh_instance(target_multimesh_instance)
+func _apply_tile_visual(tile_snapshot: Dictionary) -> void:
+	var tile_visual: BoardTileVisual = _ensure_tile_visual_for_tile_snapshot(tile_snapshot)
+	if tile_visual == null:
 		return
 
+	var tile_center_world_position: Vector3 = _build_tile_center_world_position(
+		int(tile_snapshot.get("grid_x", 0)),
+		int(tile_snapshot.get("grid_y", 0))
+	)
 	var tile_size: float = _get_tile_size()
-	var tile_mesh: BoxMesh = BoxMesh.new()
-	tile_mesh.size = Vector3(tile_size, tile_height, tile_size)
 
-	var multimesh: MultiMesh = MultiMesh.new()
-	multimesh.mesh = tile_mesh
-	multimesh.transform_format = MultiMesh.TRANSFORM_3D
-	multimesh.instance_count = tile_center_positions.size()
-	multimesh.visible_instance_count = tile_center_positions.size()
-	multimesh.custom_aabb = _build_multimesh_aabb(tile_height)
+	tile_visual.position = tile_center_world_position + Vector3(0.0, tile_size * 0.5, 0.0)
+	tile_visual.scale = Vector3.ONE * tile_size
+	tile_visual.apply_tile_snapshot(tile_snapshot)
 
-	for instance_index in tile_center_positions.size():
-		var tile_center: Vector3 = tile_center_positions[instance_index]
-		var tile_transform: Transform3D = Transform3D(
-			Basis.IDENTITY,
-			tile_center + Vector3(0.0, -(tile_height * 0.5), 0.0)
-		)
-		multimesh.set_instance_transform(instance_index, tile_transform)
+func _ensure_tile_visual_for_tile_snapshot(tile_snapshot: Dictionary) -> BoardTileVisual:
+	_ensure_tile_visual_root()
 
-	target_multimesh_instance.multimesh = multimesh
-	target_multimesh_instance.material_override = _build_material(tile_color)
+	var tile_index: int = int(tile_snapshot.get("tile_index", -1))
+	if tile_index < 0:
+		return null
+
+	var variant_id_text: String = String(tile_snapshot.get("variant_id", ""))
+	var existing_tile_visual: BoardTileVisual = _tile_visual_by_index.get(tile_index) as BoardTileVisual
+	if existing_tile_visual != null:
+		if variant_id_text.is_empty():
+			return existing_tile_visual
+
+		var existing_variant_id_text: String = String(existing_tile_visual.get_meta("variant_id", ""))
+		if existing_variant_id_text == variant_id_text:
+			return existing_tile_visual
+
+		_remove_tile_visual(tile_index)
+
+	if variant_id_text.is_empty():
+		return null
+
+	var tile_visual_scene: PackedScene = _resolve_tile_visual_scene(StringName(variant_id_text))
+	if tile_visual_scene == null:
+		return null
+
+	var tile_visual: BoardTileVisual = tile_visual_scene.instantiate() as BoardTileVisual
+	if tile_visual == null:
+		return null
+
+	tile_visual.name = "TileVisual_%s" % str(tile_index)
+	tile_visual.set_meta("variant_id", variant_id_text)
+	_tile_visual_root.add_child(tile_visual)
+	_tile_visual_by_index[tile_index] = tile_visual
+	return tile_visual
+
+func _resolve_tile_visual_scene(variant_id: StringName) -> PackedScene:
+	if _tile_variant_def_by_id.is_empty():
+		_tile_variant_def_by_id = BoardTileContentCatalog.build_variant_by_id()
+
+	var tile_variant_def: TileVariantDef = _tile_variant_def_by_id.get(variant_id) as TileVariantDef
+	if tile_variant_def == null:
+		return null
+
+	return tile_variant_def.visual_scene
+
+func _ensure_tile_visual_root() -> void:
+	if _tile_visual_root != null and is_instance_valid(_tile_visual_root):
+		return
+
+	var existing_tile_visual_root: Node3D = get_node_or_null(TILE_VISUAL_ROOT_NODE_NAME) as Node3D
+	if existing_tile_visual_root != null:
+		_tile_visual_root = existing_tile_visual_root
+		return
+
+	_tile_visual_root = Node3D.new()
+	_tile_visual_root.name = TILE_VISUAL_ROOT_NODE_NAME
+	add_child(_tile_visual_root)
+
+func _clear_tile_visuals() -> void:
+	_ensure_tile_visual_root()
+
+	for child_node in _tile_visual_root.get_children():
+		child_node.free()
+
+	_tile_visual_by_index.clear()
+
+func _remove_tile_visual(tile_index: int) -> void:
+	if not _tile_visual_by_index.has(tile_index):
+		return
+
+	var tile_visual: BoardTileVisual = _tile_visual_by_index[tile_index] as BoardTileVisual
+	if tile_visual != null and is_instance_valid(tile_visual):
+		tile_visual.free()
+
+	_tile_visual_by_index.erase(tile_index)
 
 func _rebuild_chunk_lines() -> void:
 	_clear_chunk_lines()
@@ -359,7 +430,7 @@ func _rebuild_chunk_lines() -> void:
 	var world_left_edge: float = -(_current_board_world_size.x * 0.5)
 	var world_top_edge: float = -(_current_board_world_size.y * 0.5)
 	var tile_stride: float = _get_tile_stride()
-	var line_center_y: float = line_surface_lift + (line_height * 0.5)
+	var line_center_y: float = _get_tile_size() + line_surface_lift + (line_height * 0.5)
 
 	for chunk_column_index in range(1, chunk_columns):
 		var crossed_tile_count_x: int = chunk_column_index * chunk_width
@@ -403,7 +474,7 @@ func _clear_multimesh_instance(target_multimesh_instance: MultiMeshInstance3D) -
 
 func _clear_chunk_lines() -> void:
 	for child_node in _chunk_line_container.get_children():
-		child_node.queue_free()
+		child_node.free()
 
 func _calculate_board_world_size(board_width: int, board_height: int) -> Vector2:
 	return Vector2(
@@ -426,20 +497,6 @@ func _build_tile_center_world_position(grid_x: int, grid_y: int) -> Vector3:
 		first_tile_center_x + (float(grid_x) * tile_stride),
 		0.0,
 		first_tile_center_z + (float(grid_y) * tile_stride)
-	)
-
-func _build_multimesh_aabb(tile_height: float) -> AABB:
-	return AABB(
-		Vector3(
-			-(_current_board_world_size.x * 0.5),
-			-tile_height - 0.25,
-			-(_current_board_world_size.y * 0.5)
-		),
-		Vector3(
-			max(_current_board_world_size.x, 0.1),
-			tile_height + 0.5,
-			max(_current_board_world_size.y, 0.1)
-		)
 	)
 
 func _build_material(albedo_color: Color) -> StandardMaterial3D:

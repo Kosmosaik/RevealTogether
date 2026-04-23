@@ -1,15 +1,13 @@
 [gd_resource type="Resource" script_class="MapPresetDef" format=3 uid="uid://cyo6fpqd2ofgx"]
 
 [ext_resource type="Script" uid="uid://bh7u8kcndast2" path="res://data/map_presets/MapPresetDef.gd" id="1"]
-[ext_resource type="Texture2D" uid="uid://cbxmu6lcvqy1r" path="res://64_64_lighthouse.png" id="1_rbeyl"]
+[ext_resource type="Texture2D" uid="uid://c85ieur41jjms" path="res://64_64_sunset.png" id="1_rbeyl"]
 
 [resource]
 script = ExtResource("1")
-board_width = 8
-board_height = 8
-chunk_width = 5
-chunk_height = 5
-final_rush_remaining_tiles_threshold = 10
+chunk_width = 8
+chunk_height = 8
+final_rush_remaining_tiles_threshold = 200
 reveal_image = ExtResource("1_rbeyl")
 id = &"map_preset.sandbox_64"
 display_name = "Sandbox 64"
