@@ -108,6 +108,16 @@ func get_bool(section_name: String, key_name: String, default_value: bool = fals
 
 	return _variant_to_bool(section_dictionary[key_name], default_value)
 
+func get_color(section_name: String, key_name: String, default_value: Color = Color.WHITE) -> Color:
+	if not _merged_config.has(section_name):
+		return default_value
+
+	var section_dictionary: Dictionary = _merged_config[section_name]
+	if not section_dictionary.has(key_name):
+		return default_value
+
+	return _variant_to_color(section_dictionary[key_name], default_value)
+
 func get_user_argument_string(argument_name: String, default_value: String = "") -> String:
 	if not _user_arguments.has(argument_name):
 		return default_value
@@ -229,3 +239,93 @@ func _variant_to_bool(value: Variant, default_value: bool = false) -> bool:
 			return false
 
 	return default_value
+	
+func _variant_to_color(value: Variant, default_value: Color = Color.WHITE) -> Color:
+	if value is Color:
+		return value
+
+	var color_text: String = str(value).strip_edges()
+	if color_text.is_empty():
+		return default_value
+
+	return _hex_color_text_to_color(color_text, default_value)
+
+func _hex_color_text_to_color(color_text: String, default_value: Color) -> Color:
+	var normalized_text: String = color_text.strip_edges()
+
+	if normalized_text.begins_with("#"):
+		normalized_text = normalized_text.trim_prefix("#")
+	elif normalized_text.begins_with("0x"):
+		normalized_text = normalized_text.trim_prefix("0x")
+	elif normalized_text.begins_with("0X"):
+		normalized_text = normalized_text.trim_prefix("0X")
+
+	if normalized_text.length() != 6 and normalized_text.length() != 8:
+		return default_value
+
+	var red_value: int = _hex_pair_to_int(normalized_text.substr(0, 2))
+	var green_value: int = _hex_pair_to_int(normalized_text.substr(2, 2))
+	var blue_value: int = _hex_pair_to_int(normalized_text.substr(4, 2))
+	var alpha_value: int = 255
+
+	if normalized_text.length() == 8:
+		alpha_value = _hex_pair_to_int(normalized_text.substr(6, 2))
+
+	if red_value < 0 or green_value < 0 or blue_value < 0 or alpha_value < 0:
+		return default_value
+
+	return Color(
+		float(red_value) / 255.0,
+		float(green_value) / 255.0,
+		float(blue_value) / 255.0,
+		float(alpha_value) / 255.0
+	)
+
+func _hex_pair_to_int(hex_pair: String) -> int:
+	if hex_pair.length() != 2:
+		return -1
+
+	var high_nibble: int = _hex_character_to_int(hex_pair.substr(0, 1))
+	var low_nibble: int = _hex_character_to_int(hex_pair.substr(1, 1))
+
+	if high_nibble < 0 or low_nibble < 0:
+		return -1
+
+	return (high_nibble * 16) + low_nibble
+
+func _hex_character_to_int(character_text: String) -> int:
+	match character_text.to_lower():
+		"0":
+			return 0
+		"1":
+			return 1
+		"2":
+			return 2
+		"3":
+			return 3
+		"4":
+			return 4
+		"5":
+			return 5
+		"6":
+			return 6
+		"7":
+			return 7
+		"8":
+			return 8
+		"9":
+			return 9
+		"a":
+			return 10
+		"b":
+			return 11
+		"c":
+			return 12
+		"d":
+			return 13
+		"e":
+			return 14
+		"f":
+			return 15
+
+	return -1

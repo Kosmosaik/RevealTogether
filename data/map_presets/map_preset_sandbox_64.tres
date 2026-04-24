@@ -5,6 +5,8 @@
 
 [resource]
 script = ExtResource("1_qfyxd")
+board_width = 32
+board_height = 32
 chunk_width = 4
 chunk_height = 4
 start_unlock_outer_edge_randomness = 1.0

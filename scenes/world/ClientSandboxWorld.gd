@@ -68,26 +68,45 @@ func _unhandled_input(event: InputEvent) -> void:
 	_match_session_service.request_reveal_tile(tile_index)
 
 func _configure_environment() -> void:
-	var environment: Environment = Environment.new()
-	environment.background_mode = Environment.BG_COLOR
-	environment.background_color = Color(0.07, 0.09, 0.11, 1.0)
-	environment.ambient_light_color = Color(0.82, 0.85, 0.90, 1.0)
-	environment.ambient_light_energy = max(
+	var background_color: Color = RuntimeConfig.get_color(
+		"client_world",
+		"background_color",
+		Color(0.56, 0.75, 0.91, 1.0)
+	)
+	var ambient_light_color: Color = RuntimeConfig.get_color(
+		"client_world",
+		"ambient_light_color",
+		Color(0.86, 0.91, 0.96, 1.0)
+	)
+	var ambient_light_energy: float = max(
 		RuntimeConfig.get_float("client_world", "ambient_light_energy", 1.0),
 		0.0
 	)
+
+	var environment: Environment = Environment.new()
+	environment.background_mode = Environment.BG_COLOR
+	environment.background_color = background_color
+	environment.ambient_light_color = ambient_light_color
+	environment.ambient_light_energy = ambient_light_energy
 	_world_environment.environment = environment
 
 	var sun_rotation_x_degrees: float = RuntimeConfig.get_float("client_world", "sun_rotation_x_degrees", -55.0)
 	var sun_rotation_y_degrees: float = RuntimeConfig.get_float("client_world", "sun_rotation_y_degrees", 35.0)
 	var sun_light_energy: float = max(
-		RuntimeConfig.get_float("client_world", "sun_light_energy", 1.4),
+		RuntimeConfig.get_float("client_world", "sun_light_energy", 1.0),
 		0.0
 	)
+	var sun_light_color: Color = RuntimeConfig.get_color(
+		"client_world",
+		"sun_light_color",
+		Color(1.0, 0.96, 0.88, 1.0)
+	)
+	var sun_shadow_enabled: bool = RuntimeConfig.get_bool("client_world", "sun_shadow_enabled", true)
 
 	_sun_light.rotation_degrees = Vector3(sun_rotation_x_degrees, sun_rotation_y_degrees, 0.0)
+	_sun_light.light_color = sun_light_color
 	_sun_light.light_energy = sun_light_energy
-	_sun_light.shadow_enabled = true
+	_sun_light.shadow_enabled = sun_shadow_enabled
 
 func _configure_ground(minimum_world_size: Vector2 = Vector2.ZERO) -> void:
 	var default_ground_size: float = max(RuntimeConfig.get_float("client_world", "ground_size", 64.0), 8.0)
@@ -116,8 +135,14 @@ func _configure_ground(minimum_world_size: Vector2 = Vector2.ZERO) -> void:
 	ground_shape.size = Vector3(ground_size_x, ground_height, ground_size_z)
 	_ground_collision_shape.shape = ground_shape
 
+	var ground_color: Color = RuntimeConfig.get_color(
+		"client_world",
+		"ground_color",
+		Color(0.17, 0.22, 0.18, 1.0)
+	)
+
 	var ground_material: StandardMaterial3D = StandardMaterial3D.new()
-	ground_material.albedo_color = Color(0.17, 0.22, 0.18, 1.0)
+	ground_material.albedo_color = ground_color
 	ground_material.roughness = 1.0
 	ground_material.metallic = 0.0
 	_ground_mesh_instance.material_override = ground_material

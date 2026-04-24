@@ -2,186 +2,158 @@
 
 ## Purpose
 
-This document records the current player-facing design direction for **RevealTogether**.
-It is intentionally aligned with the current repo state so the design docs do not drift away from what is actually implemented.
+This document captures the current design truth of the project based on the latest repo snapshot. It is not a wishlist. It describes what the prototype already proves, what is intentionally deferred, and what design constraints are now locked by the existing implementation.
 
----
+## Current prototype status (2026-04-24)
 
-## Current prototype status (2026-04-23)
+The project is now a playable multiplayer prototype with:
 
-The live project is no longer only a networking sandbox.
-It now proves the first playable shared board loop in 3D.
+- a dedicated-server flow
+- an authoritative shared board
+- client join/bootstrap replication
+- a working third-person/top-down player controller with orbit camera
+- tile reveal from the client through server-authoritative board actions
+- data-authored map presets, tile families, tile variants, roles, spawn layouts, and tile behaviors
+- a debug content inspection overlay for checking loaded content state
 
 ### Confirmed in the current repo
-- dedicated server, client, and local debug runtime modes
-- join flow with authoritative server-owned session state
-- shared logical board with full snapshot on join and board delta replication afterward
-- tile claiming, timed claim expiry, tile clearing, unlock propagation, and final-rush activation
-- hidden-image reveal under the board
-- 3D movement, orbit camera, zoom, and visible remote player avatars
-- data-authored map preset, tile family, and tile variant loading with startup validation
-- placeholder scene-based tile visuals for the currently authored tile variants
+
+- Players spawn outside the map using an authored outer-perimeter spawn layout.
+- Initial revealed tiles are taken from the outer edge of the board using a percentage-based unlock rule.
+- Tile family placement is region-based and intentionally organic/distorted rather than a rigid checker or striping layout.
+- Tile visuals are scene-driven placeholder assets, but gameplay truth still lives in board state, not in tile scenes.
+- Role assignment exists and is data-authored, but role gameplay depth is still intentionally light.
+- A standard tile behavior asset exists and is linked through tile variants.
 
 ### Intentionally not finished yet
-- role data assets and role-specific presentation/content
-- tool, charm, inventory, and drop scaffolding
-- richer tile behaviors beyond the current standard reveal/clear loop
-- readable targeting/highlight polish for final art-driven tiles
-- map-complete presentation, results flow, and archive output
-- the full planned family/variant roster from the longer-term design target
+
+- tool/charm/inventory gameplay
+- results / map-complete flow
+- milestone/progression content
+- authored item content
+- richer behavior-specific tile gameplay
+- final production visual pass and readability polish
 
 ### Important repo truth
-The project currently proves the gameplay loop with a **small authored content slice**, not the full future content plan.
-That is expected and correct for the current phase.
 
----
+The prototype is now strong enough that future design work should plug into the current server-authoritative board loop rather than replace it.
 
 ## 1. High-level concept
 
-RevealTogether is an online multiplayer game where players move around a 3D space and clear a large shared tile board to reveal a hidden image underneath.
+RevealTogether is a shared board-clearing game where multiple players spawn outside a hidden map, move around the world in 3D space, and work inward by clearing tiles. The current prototype proves the spatial feel, the shared board state, and the data-driven content direction.
 
-The board is the shared objective.
-Players contribute to the same map, but still get local competition, social presence, recognizable themes, and room for future loot and role flavor.
-
-The intended feel is:
-- cooperative at the map level
-- competitive in local moments
-- readable and satisfying moment to moment
-- social, a little chaotic, and easy to spectate
-- expandable without rewriting the core loop
-
----
+The board is the gameplay truth. The background image is presentation. Tile scenes are presentation. Player movement and tile reveals happen in the world, but the board state remains the source of truth.
 
 ## 2. Core player loop
 
-1. Join a live match.
-2. Spawn into the 3D board space.
-3. Move to reachable tiles.
-4. Target a tile and request a reveal action.
-5. Let the server validate claim ownership and damage ticks.
-6. Clear tiles to reveal more of the hidden image and unlock neighbors.
-7. Enter final rush when the remaining tile threshold is reached.
-8. Finish the map and later transition into stronger results/reward presentation.
+1. Join a match.
+2. Spawn outside the map boundary on ground near the board.
+3. Move around the world with the 3D controller and camera rig.
+4. Approach available edge tiles.
+5. Click to request reveal.
+6. Let the server validate and apply the reveal.
+7. Watch the shared board open inward over time.
 
----
+This is already the real playable loop of the prototype.
 
 ## 3. Locked v1 design direction
 
-## 3.1 Shared progress with personal moments
-The board should feel communal, but players still need local moments that feel personal.
-Examples for later phases include:
-- finishing a contested tile
-- claiming a hard-to-reach tile first
-- standing out visually through role/tool/charm identity
-- earning memorable drops or end-of-map recognition
+### 3.1 Shared progress with personal moments
 
-## 3.2 Roles are style identities first
-The intended v1 role set is still:
-- **Archaeologist**
-- **Hacker**
-- **Groundkeeper**
-- **Scavenger**
+The game is fundamentally cooperative. The board is shared and server-owned. Individual players still have spatial presence, movement, and later role/tool identity, but the core objective is collective reveal progress.
 
-These remain the target design direction, but they are **not implemented as authored role data in the current repo yet**.
+### 3.2 Roles are style identities first
 
-## 3.3 Tile families are broad presentation buckets first
-The intended broad family set is still:
-- **Relic**
-- **Glitch**
-- **Overgrowth**
-- **Scrap**
+Roles currently exist as authored content and assignment data. They should continue to behave as style/theme identities first, not hard class-locks with wildly asymmetric rules. Strong asymmetry is still out of scope for the current direction.
 
-In the current repo, only a smaller authored slice is present to prove the framework.
-The design target remains larger than the current authored content set.
+### 3.3 Tile families are broad presentation buckets first
 
-## 3.4 Equipment scope remains intentionally narrow
-The first real equipment scope remains:
-- **Tool**
-- **Charm**
+Tile families currently act as broad thematic buckets. Variants provide specific visual expressions inside those buckets. This is the right direction for now: broad family mood, narrower variant expression, server-truth gameplay kept separate.
 
-Consumables stay in regular inventory rather than becoming extra equipped slots.
-This is still design direction only; the inventory/equipment layer is not implemented yet.
+### 3.4 Equipment scope remains intentionally narrow
 
-## 3.5 Claims remain lightweight and time-based
-A tile becomes effectively claimed when a player damages it.
-If that player stops damaging the tile for the configured timeout window, the claim expires.
-During final rush, claims are removed so the map can finish faster.
+The current design direction still favors only two early gear slots:
 
-This rule is already reflected in the current gameplay runtime.
+- Tool
+- Charm
 
-## 3.6 Scope exclusions remain the same
-Do not design current implementation around:
+Consumables should remain normal inventory content later rather than equipment slots.
+
+### 3.5 Claims remain lightweight and time-based
+
+The earlier design direction still holds: claims should be lightweight presence markers tied to tile interaction timing, not heavy ownership structures. That system is not implemented yet, but nothing in the repo contradicts it.
+
+### 3.6 Scope exclusions remain the same
+
+For now, do not expand design scope into:
+
 - monetization
-- ads
 - crafting
-
-Those remain intentionally out of scope.
-
----
+- large role asymmetry
+- production asset pipelines
+- complex combat-style systems
 
 ## 4. Current authored content in the repo
 
-This section describes the repo as it exists today, not the broader future plan.
-
 ### Map presets currently authored
+
 - `map_preset.sandbox_64`
 
 ### Tile families currently authored
+
 - `tile_family.overgrowth`
 - `tile_family.scrap`
 
 ### Tile variants currently authored
+
 - `tile_variant.overgrowth_patch`
-- `tile_variant.scrap_plate`
+- `tile_variant_scrap_plate`
 
-### Current visual approach
-- board layout is driven by logical grid data
-- reveal texture is shown as an underlay beneath cleared tiles
-- tile variants reference `PackedScene` visuals through `TileVariantDef`
-- current placeholder visuals are scene-authored cube-based tiles sized to the board tile footprint
+### Roles currently authored
 
-### Current board presentation implications
-The board already supports swapping placeholder visuals for authored assets through data-backed tile variant scene references.
-That means later art replacement should happen by changing content assets and scenes, not by redesigning gameplay truth.
+- `role.archaeologist`
+- `role.groundkeeper`
+- `role.hacker`
+- `role.scavenger`
 
----
+### Spawn layouts currently authored
+
+- `spawn_layout.sandbox_outer_perimeter`
+- `spawn_layout.sandbox_ring_8`
+
+### Tile behaviors currently authored
+
+- `tile_behavior.standard_reveal_clear`
 
 ## 5. Design implications of the current implementation
 
-## 5.1 The core loop is now real enough to guide design
-The project has passed the stage where design is purely theoretical.
-Server ownership, reveal flow, final rush, and hidden-image payoff now exist in playable form.
+### 5.1 The board-opening fantasy is now proven
 
-## 5.2 Readable targeting polish can wait until the asset pass
-Because tile visuals are still placeholder-driven and will change again with stronger art, highly polished target readability should be treated as a later presentation pass unless it blocks usability.
+The switch to outside-the-map spawning plus edge-based initial access makes the reveal fantasy much clearer. Players now work inward from the perimeter instead of feeling dropped into the center.
 
-## 5.3 Future content should plug into the existing board loop
-The next design-heavy work should extend the current loop through:
-- more authored tile families/variants
-- role presentation and eventual role-backed item identity
-- tools/charms/inventory
-- results/reward layers
+### 5.2 Placeholder visuals are good enough for design iteration
 
-It should not replace the current authoritative board model.
+The current scene-based placeholder cubes are enough to test:
 
----
+- movement feel
+- board scale
+- edge approach
+- reveal pacing
+- family/variant readability at a prototype level
+
+Readable target polish can still wait until the production art pass.
+
+### 5.3 Data-driven content is now a real design constraint
+
+Map presets, tile families, variants, behaviors, roles, and spawn layouts are already authored as content resources. New design work should continue through authored defs/resources instead of hardcoding more rules in gameplay scripts.
 
 ## 6. Recommended next design-sensitive priorities
 
-1. Finish the remaining data-authored content framework, especially roles, behaviors, and tuning resources.
-2. Add the first item/equipment backbone for Tool and Charm.
-3. Add map-complete presentation, contribution stats, and results flow.
-4. Expand the authored family/variant roster after the framework is ready.
-
----
+1. Define early Tool and Charm design boundaries before inventory work expands.
+2. Define the first real tile-behavior differences after the current standard behavior baseline.
+3. Define what a completed map should trigger from a player-facing perspective.
+4. Decide what minimum progression/results feedback is needed for internal playtests.
 
 ## 7. Summary
 
-The current repo already expresses the intended heart of RevealTogether:
-- shared board progress
-- authoritative tile clearing
-- gradual hidden-image reveal
-- 3D multiplayer presence
-
-What is missing now is not the gameplay heart.
-What is missing is the next layer of **content framework, item framework, and match-completion presentation**.
+The project has moved past concept-only design. It now has a real shared board loop, real world-space player movement, and a real authored content foundation. Phase 4 is effectively complete in gameplay-framework terms, and the next meaningful design work should focus on the first gameplay-extension layer rather than more foundational rewrites.

@@ -18,7 +18,7 @@ static func build_board_state_from_map_preset(map_preset_def: MapPresetDef) -> B
 		board_state.reveal_image_id = &""
 
 	var tile_count: int = board_state.get_total_tile_count()
-	var default_tile_hp: int = 1
+	var default_tile_hp: int = max(RuntimeConfig.get_int("board_actions", "default_tile_hp", 1), 1)
 
 	for tile_index in range(tile_count):
 		var tile_coords: Vector2i = board_state.get_coords_from_tile_index(tile_index)

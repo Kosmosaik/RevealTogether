@@ -212,7 +212,12 @@ func _rebuild_board_base() -> void:
 	)
 	_board_base_mesh_instance.mesh = board_base_mesh
 
-	var board_base_material: StandardMaterial3D = _build_material(DEFAULT_BOARD_BASE_COLOR)
+	var board_base_color: Color = RuntimeConfig.get_color(
+		"board_view",
+		"base_color",
+		DEFAULT_BOARD_BASE_COLOR
+	)
+	var board_base_material: StandardMaterial3D = _build_material(board_base_color)
 	_board_base_mesh_instance.material_override = board_base_material
 	_board_base_mesh_instance.position = Vector3(0.0, -board_base_surface_drop - (board_base_height * 0.5), 0.0)
 
@@ -425,7 +430,12 @@ func _rebuild_chunk_lines() -> void:
 		RuntimeConfig.get_float("board_view", "chunk_line_surface_lift", 0.0),
 		0.0
 	)
-	var line_material: StandardMaterial3D = _build_material(DEFAULT_CHUNK_LINE_COLOR)
+	var line_color: Color = RuntimeConfig.get_color(
+		"board_view",
+		"chunk_line_color",
+		DEFAULT_CHUNK_LINE_COLOR
+	)
+	var line_material: StandardMaterial3D = _build_material(line_color)
 
 	var world_left_edge: float = -(_current_board_world_size.x * 0.5)
 	var world_top_edge: float = -(_current_board_world_size.y * 0.5)
