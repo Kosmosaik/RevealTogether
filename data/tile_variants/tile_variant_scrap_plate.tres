@@ -7,6 +7,7 @@
 script = ExtResource("1")
 id = &"tile_variant_scrap_plate"
 family_id = &"tile_family.scrap"
+behavior_id = &"tile_behavior.standard_reveal_clear"
 display_name = "Scrap Plate"
 tags = PackedStringArray("scrap", "metal", "industrial")
 visual_scene = ExtResource("2")

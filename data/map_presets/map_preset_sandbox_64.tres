@@ -1,13 +1,18 @@
-[gd_resource type="Resource" script_class="MapPresetDef" format=3 uid="uid://cyo6fpqd2ofgx"]
+[gd_resource type="Resource" script_class="MapPresetDef" format=3 uid="uid://dx3otn1bbjko3"]
 
-[ext_resource type="Script" uid="uid://bh7u8kcndast2" path="res://data/map_presets/MapPresetDef.gd" id="1"]
-[ext_resource type="Texture2D" uid="uid://c85ieur41jjms" path="res://64_64_sunset.png" id="1_rbeyl"]
+[ext_resource type="Script" uid="uid://bh7u8kcndast2" path="res://data/map_presets/MapPresetDef.gd" id="1_qfyxd"]
+[ext_resource type="Texture2D" uid="uid://cbxmu6lcvqy1r" path="res://64_64_lighthouse.png" id="1_rbeyl"]
 
 [resource]
-script = ExtResource("1")
-chunk_width = 8
-chunk_height = 8
+script = ExtResource("1_qfyxd")
+chunk_width = 4
+chunk_height = 4
+start_unlock_outer_edge_randomness = 1.0
 final_rush_remaining_tiles_threshold = 200
 reveal_image = ExtResource("1_rbeyl")
+family_region_warp_frequency = 20.0
+family_region_warp_strength = 4.0
+rare_tile_chance = 0.04
+spawn_layout_id = &"spawn_layout.sandbox_outer_perimeter"
 id = &"map_preset.sandbox_64"
 display_name = "Sandbox 64"

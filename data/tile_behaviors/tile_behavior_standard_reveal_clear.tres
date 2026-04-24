@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="TileBehaviorDef" format=3]
+
+[ext_resource type="Script" path="res://data/tile_behaviors/TileBehaviorDef.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"tile_behavior.standard_reveal_clear"
+display_name = "Standard Reveal Clear"
+tags = PackedStringArray("tile_behavior", "default", "clear_on_reveal")
+description = "Baseline tile behavior for the current prototype. Tiles use the current standard reveal-and-clear flow."

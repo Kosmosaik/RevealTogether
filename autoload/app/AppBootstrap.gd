@@ -16,6 +16,8 @@ func _ready() -> void:
 
 	# Load content early so validation can inspect the filesystem now.
 	ContentRegistry.initialize(RuntimeConfig)
+	LogService.info("BOOT", "Registered content resources: %d" % ContentRegistry.get_registered_resource_paths_copy().size())
+	LogService.info("BOOT", "Content manifest hash: %s" % ContentRegistry.get_manifest_hash())
 
 	var startup_errors: PackedStringArray = StartupValidator.validate(RuntimeConfig)
 	if startup_errors.size() > 0:

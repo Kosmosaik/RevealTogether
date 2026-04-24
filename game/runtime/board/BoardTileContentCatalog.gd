@@ -99,3 +99,41 @@ static func build_variant_list_by_family_id() -> Dictionary:
 		variant_list_by_family_id[tile_variant_def.family_id] = family_variant_list
 
 	return variant_list_by_family_id
+
+static func build_behavior_list() -> Array[TileBehaviorDef]:
+	var behavior_by_id: Dictionary = {}
+	var sorted_behavior_id_list: Array[String] = []
+	var content_id_list: Array[StringName] = ContentRegistry.get_all_content_ids()
+
+	for content_id in content_id_list:
+		var content_resource: Resource = ContentRegistry.get_content(content_id)
+		var tile_behavior_def: TileBehaviorDef = content_resource as TileBehaviorDef
+		if tile_behavior_def == null:
+			continue
+
+		if String(tile_behavior_def.id).is_empty():
+			continue
+
+		behavior_by_id[tile_behavior_def.id] = tile_behavior_def
+		sorted_behavior_id_list.append(String(tile_behavior_def.id))
+
+	sorted_behavior_id_list.sort()
+
+	var behavior_list: Array[TileBehaviorDef] = []
+	for sorted_behavior_id in sorted_behavior_id_list:
+		var behavior_id: StringName = StringName(sorted_behavior_id)
+		var tile_behavior_def: TileBehaviorDef = behavior_by_id[behavior_id] as TileBehaviorDef
+		if tile_behavior_def == null:
+			continue
+		behavior_list.append(tile_behavior_def)
+
+	return behavior_list
+
+static func build_behavior_by_id() -> Dictionary:
+	var behavior_by_id: Dictionary = {}
+	var behavior_list: Array[TileBehaviorDef] = build_behavior_list()
+
+	for tile_behavior_def in behavior_list:
+		behavior_by_id[tile_behavior_def.id] = tile_behavior_def
+
+	return behavior_by_id

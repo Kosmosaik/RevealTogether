@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="SpawnLayoutDef" format=3 uid="uid://eb17cfdquncy"]
+
+[ext_resource type="Script" uid="uid://b0230jhpc8mqi" path="res://data/tuning/spawn_layouts/SpawnLayoutDef.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = &"spawn_layout.sandbox_ring_8"
+display_name = "Sandbox Ring 8"

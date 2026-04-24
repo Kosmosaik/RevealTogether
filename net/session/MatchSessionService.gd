@@ -108,7 +108,11 @@ func _resolve_server_map_preset_id() -> StringName:
 		configured_map_preset_id = default_map_preset_id
 	return StringName(configured_map_preset_id)
 
-func _build_board_state_for_map_preset(map_preset_id: StringName) -> BoardState:
+func _get_map_preset_def(map_preset_id: StringName) -> MapPresetDef:
+	if map_preset_id == &"":
+		LogService.error("NET", "Map preset id is empty.")
+		return null
+
 	if not ContentRegistry.has_content(map_preset_id):
 		LogService.error("NET", "Map preset '%s' is missing from ContentRegistry." % String(map_preset_id))
 		return null
@@ -117,6 +121,56 @@ func _build_board_state_for_map_preset(map_preset_id: StringName) -> BoardState:
 	var map_preset_def: MapPresetDef = map_preset_resource as MapPresetDef
 	if map_preset_def == null:
 		LogService.error("NET", "Content '%s' is not a MapPresetDef resource." % String(map_preset_id))
+		return null
+
+	return map_preset_def
+
+func _get_server_map_preset_def() -> MapPresetDef:
+	var map_preset_id: StringName = &""
+	if _match_state != null:
+		map_preset_id = _match_state.map_preset_id
+
+	if map_preset_id == &"":
+		map_preset_id = _resolve_server_map_preset_id()
+
+	return _get_map_preset_def(map_preset_id)
+
+func _get_server_spawn_layout_def() -> SpawnLayoutDef:
+	var map_preset_def: MapPresetDef = _get_server_map_preset_def()
+	if map_preset_def == null:
+		return null
+
+	if map_preset_def.spawn_layout_id == &"":
+		LogService.error("NET", "Map preset '%s' has an empty spawn_layout_id." % String(map_preset_def.id))
+		return null
+
+	var spawn_layout_resource: Resource = ContentRegistry.get_content(map_preset_def.spawn_layout_id)
+	if spawn_layout_resource == null:
+		LogService.error(
+			"NET",
+			"Map preset '%s' references missing spawn layout '%s'." % [
+				String(map_preset_def.id),
+				String(map_preset_def.spawn_layout_id)
+			]
+		)
+		return null
+
+	var spawn_layout_def: SpawnLayoutDef = spawn_layout_resource as SpawnLayoutDef
+	if spawn_layout_def == null:
+		LogService.error(
+			"NET",
+			"Map preset '%s' references content '%s' that is not a SpawnLayoutDef resource." % [
+				String(map_preset_def.id),
+				String(map_preset_def.spawn_layout_id)
+			]
+		)
+		return null
+
+	return spawn_layout_def
+
+func _build_board_state_for_map_preset(map_preset_id: StringName) -> BoardState:
+	var map_preset_def: MapPresetDef = _get_map_preset_def(map_preset_id)
+	if map_preset_def == null:
 		return null
 
 	return BoardBuilder.build_board_state_from_map_preset(map_preset_def)
@@ -369,6 +423,7 @@ func rpc_receive_hello_reject(reject_payload: Dictionary) -> void:
 	shutdown_session()
 
 @rpc("any_peer", "call_remote", "reliable", NetProtocol.HANDSHAKE_CHANNEL)
+
 func rpc_receive_join_match_request(join_request_payload: Dictionary) -> void:
 	if not multiplayer.is_server():
 		return
@@ -416,15 +471,45 @@ func rpc_receive_join_match_request(join_request_payload: Dictionary) -> void:
 		)
 		return
 
+	var map_preset_def: MapPresetDef = _get_server_map_preset_def()
+	if map_preset_def == null:
+		LogService.error("NET", "Join request could not resolve a valid MapPresetDef for the active match.")
+		_send_join_reject_to_peer(
+			sender_peer_id,
+			requested_match_id,
+			NetProtocol.JOIN_REJECT_REASON_MATCH_UNAVAILABLE,
+			"Server map preset content is invalid."
+		)
+		return
+
+	var spawn_layout_def: SpawnLayoutDef = _get_server_spawn_layout_def()
+	if spawn_layout_def == null:
+		LogService.error("NET", "Join request could not resolve a valid SpawnLayoutDef for the active map preset.")
+		_send_join_reject_to_peer(
+			sender_peer_id,
+			requested_match_id,
+			NetProtocol.JOIN_REJECT_REASON_MATCH_UNAVAILABLE,
+			"Server spawn layout content is invalid."
+		)
+		return
+
 	var approved_handshake_payload: Dictionary = _handshake_approved_by_peer_id[sender_peer_id] as Dictionary
 	var spawn_slot_index: int = _allocate_spawn_slot_for_peer(sender_peer_id)
-	var spawn_position: Vector3 = MatchSpawnPlanner.build_spawn_position_for_slot(spawn_slot_index)
+	var spawn_position: Vector3 = MatchSpawnPlanner.build_spawn_position_for_slot(map_preset_def, spawn_layout_def, spawn_slot_index)
+	var sorted_role_list: Array[RoleDef] = RoleContentCatalog.build_sorted_role_list()
 
 	var player_state: MatchPlayerState = MatchPlayerState.new()
 	player_state.peer_id = sender_peer_id
 	player_state.player_display_name = str(approved_handshake_payload.get("player_display_name", "Player"))
+
+	if not sorted_role_list.is_empty():
+		var assigned_role_index: int = spawn_slot_index % sorted_role_list.size()
+		var assigned_role_def: RoleDef = sorted_role_list[assigned_role_index]
+		if assigned_role_def != null:
+			player_state.role_id = assigned_role_def.id
+
 	player_state.world_position = spawn_position
-	player_state.world_yaw_radians = MatchSpawnPlanner.build_spawn_yaw_for_slot(spawn_slot_index)
+	player_state.world_yaw_radians = MatchSpawnPlanner.build_spawn_yaw_for_slot(map_preset_def, spawn_layout_def, spawn_slot_index)
 	_match_state.add_player_state(player_state)
 
 	var join_snapshot_payload: Dictionary = ConnectionDtos.build_join_snapshot_payload(_match_state, sender_peer_id)
@@ -437,7 +522,15 @@ func rpc_receive_join_match_request(join_request_payload: Dictionary) -> void:
 			continue
 		rpc_id(approved_peer_id, "rpc_receive_player_spawn", spawn_payload)
 
-	LogService.info("NET", "Peer %s joined match '%s' as '%s'." % [sender_peer_id, requested_match_id, player_state.player_display_name])
+	LogService.info(
+		"NET",
+		"Peer %s joined match '%s' as '%s' with role '%s'." % [
+			sender_peer_id,
+			requested_match_id,
+			player_state.player_display_name,
+			String(player_state.role_id)
+		]
+	)
 
 @rpc("authority", "call_remote", "reliable", NetProtocol.HANDSHAKE_CHANNEL)
 func rpc_receive_join_match_snapshot(snapshot_payload: Dictionary) -> void:
@@ -449,14 +542,29 @@ func rpc_receive_join_match_snapshot(snapshot_payload: Dictionary) -> void:
 	_local_player_snapshot_by_peer_id.clear()
 
 	var player_snapshot_list: Array = snapshot_payload.get("players", [])
+	var role_summary_list: Array[String] = []
+
 	for player_snapshot_variant in player_snapshot_list:
 		var player_snapshot: Dictionary = player_snapshot_variant
 		var peer_id: int = int(player_snapshot.get("peer_id", 0))
 		if peer_id <= 0:
 			continue
+
 		_local_player_snapshot_by_peer_id[peer_id] = player_snapshot.duplicate(true)
 
-	LogService.info("NET", "Joined match '%s' with %s player snapshot(s)." % [_local_joined_match_id, player_snapshot_list.size()])
+		var player_display_name: String = str(player_snapshot.get("player_display_name", ""))
+		var player_role_id: String = str(player_snapshot.get("role_id", ""))
+		role_summary_list.append("%s='%s' (%s)" % [peer_id, player_role_id, player_display_name])
+
+	LogService.info(
+		"NET",
+		"Joined match '%s' with %s player snapshot(s). Roles: %s" % [
+			_local_joined_match_id,
+			player_snapshot_list.size(),
+			role_summary_list
+		]
+	)
+
 	joined_match.emit(snapshot_payload)
 
 @rpc("authority", "call_remote", "reliable", NetProtocol.HANDSHAKE_CHANNEL)
@@ -491,7 +599,16 @@ func rpc_receive_player_spawn(spawn_payload: Dictionary) -> void:
 		return
 
 	_local_player_snapshot_by_peer_id[peer_id] = player_payload.duplicate(true)
-	LogService.info("NET", "Player spawn replicated for peer %s ('%s')." % [peer_id, player_payload.get("player_display_name", "")])
+
+	LogService.info(
+		"NET",
+		"Player spawn replicated for peer %s ('%s', role='%s')." % [
+			peer_id,
+			player_payload.get("player_display_name", ""),
+			player_payload.get("role_id", "")
+		]
+	)
+
 	player_spawned.emit(spawn_payload)
 
 @rpc("authority", "call_remote", "reliable", NetProtocol.HANDSHAKE_CHANNEL)

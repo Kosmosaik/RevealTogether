@@ -9,5 +9,6 @@ id = &"tile_variant.overgrowth_patch"
 display_name = "Overgrowth Patch"
 tags = PackedStringArray("tile_variant", "organic", "scene_visual")
 family_id = &"tile_family.overgrowth"
+behavior_id = &"tile_behavior.standard_reveal_clear"
 assignment_weight = 1.0
 visual_scene = ExtResource("2")

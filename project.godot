@@ -22,6 +22,11 @@ LogService="*res://autoload/app/LogService.gd"
 ContentRegistry="*res://autoload/app/ContentRegistry.gd"
 AppBootstrap="*res://autoload/app/AppBootstrap.gd"
 
+[display]
+
+window/stretch/mode="viewport"
+window/stretch/scale_mode="integer"
+
 [input]
 
 move_forward={
