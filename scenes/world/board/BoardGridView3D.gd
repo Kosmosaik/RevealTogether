@@ -379,7 +379,7 @@ func _rebuild_reveal_underlay() -> void:
 	var reveal_underlay_material: StandardMaterial3D = StandardMaterial3D.new()
 	reveal_underlay_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	reveal_underlay_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	reveal_underlay_material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	reveal_underlay_material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	reveal_underlay_material.albedo_texture = reveal_texture
 	reveal_underlay_material.albedo_color = Color.WHITE
 	reveal_underlay_material.roughness = 1.0

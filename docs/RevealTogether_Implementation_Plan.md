@@ -2,263 +2,235 @@
 
 ## Purpose
 
-This document tracks implementation truth against the current repo. It focuses on what is already complete, what remains, and what should happen next without inventing architecture that the project does not currently use.
+This document tracks the implementation phase status for RevealTogether. It reflects the current repo state after Phase 4 and the Phase 4b quality/large-board work.
 
-## Current status snapshot (2026-04-24)
+## Current status snapshot (2026-04-28)
 
 ### Completed in code
 
-- Phase 0: project skeleton
-- Phase 1: dedicated server loop
-- Phase 2: board and reveal core
-- Phase 3: 3D player controller and camera
-- Phase 4: data-driven content framework, functionally complete in practice
+- Phase 0 - project skeleton.
+- Phase 1 - dedicated server loop.
+- Phase 2 - board and reveal core.
+- Phase 3 - 3D player controller and camera.
+- Phase 4 - data-driven content framework.
+- Phase 4b baseline cleanup/config/validation/file organization work that has been chosen so far.
+- Phase 4b large-board performance foundation:
+  - chunk state population,
+  - faster local chunk-seed tile-family assignment,
+  - MultiMesh full-board renderer path,
+  - incremental MultiMesh tile deltas,
+  - streamed join board snapshots,
+  - compact streamed snapshot payloads,
+  - hybrid capped detailed tile overlay,
+  - progressive client-side board visual build,
+  - loading/progress UI.
 
-### Current repo truth
+### Current practical state
 
-The repo currently contains authored content for:
+The project is still pre-Phase 5. The latest work has focused on making the Phase 4 foundation stable, maintainable, and able to support much larger boards without hiding distant chunks.
 
-- map presets
-- tile families
-- tile variants
-- roles
-- spawn layouts
-- tile behaviors
+### Recommended immediate path
 
-The repo also includes:
-
-- startup validation
-- content registry loading
-- content inspection overlay
-- role assignment on join
-- authored outer-perimeter spawning
-- edge-based initial board unlocks
-- scene-based tile visuals linked through variant content
-
-### Small schema cleanup still visible
-
-`MapPresetDef.gd` still contains unused placeholder id fields that are not backed by active resource domains in the current repo. This is a cleanup item, not a blocker to moving forward.
-
-### Recommended next milestone
-
-Move into Phase 5 and keep the next branch focused on gameplay-extension scaffolding rather than more framework churn.
-
-## 1. Phase overview
+Finish or defer the remaining Phase 4b large-board polish items before starting Phase 5. The main remaining Phase 4b topic is visual richness/readability for large boards without returning to per-tile scene instances everywhere.
 
 ## Phase 0 - Project skeleton
 
 ### Goal
 
-Establish a clean Godot project structure with explicit runtime ownership and enough bootstrap/config plumbing to support later multiplayer and content work.
+Create the Godot project foundation, boot path, config structure, and initial source organization.
 
-### Exit criteria met
+### Status
 
-- bootstrap path exists
-- runtime config exists
-- logging/content bootstrap exists
-- project structure is modular enough for later phases
+Complete.
 
 ## Phase 1 - Dedicated server loop
 
 ### Goal
 
-Get a server process and client process talking cleanly enough to connect, join, and keep a minimal session alive.
+Support a dedicated server runtime and client connection flow.
 
-### Exit criteria met
+### Status
 
-- headless dedicated server mode works
-- client can connect and join
-- basic session flow exists
-- join/bootstrap path is functioning
+Complete.
+
+### Current notes
+
+The project has client, dedicated server, and local debug bootstrap scenes. The network config is under `config/defaults/app.cfg` and the runtime-specific defaults are under `config/defaults/client.cfg`, `server.cfg`, and `local_debug.cfg`.
 
 ## Phase 2 - Board and reveal core
 
 ### Goal
 
-Make the server own a real board, replicate it to clients, and allow tile reveal actions through an authoritative flow.
+Implement authoritative board state and a playable reveal/clear loop.
 
-### Exit criteria met
+### Status
 
-- server-owned board state exists
-- tile DTO replication works
-- click-to-reveal path works
-- reveal requests are validated server-side
-- board snapshots and updates are applied on the client
+Complete.
 
-### Repo notes
+### Current notes
 
-The current repo goes beyond a trivial board proof. Board generation, tile content assignment, reveal state, and final-rush threshold support are already present.
+The server owns board state. Board actions are validated through server-side runtime services, then replicated to clients through board deltas.
 
 ## Phase 3 - 3D player controller and camera
 
 ### Goal
 
-Validate that the prototype feels right as a navigable 3D world rather than only as a board test.
+Move the prototype into a 3D world with player movement, camera, and world-space board interaction.
 
-### Exit criteria currently satisfied
+### Status
 
-- controllable player pawn exists
-- orbit camera rig exists
-- camera-relative movement exists
-- replicated player avatars exist
-- client sandbox world integrates player movement with board interaction
+Complete.
 
-### Deferred inside this phase
+### Current notes
 
-- readability polish for precise target selection
-- final production camera tuning
-- art-driven interaction feedback
-
-These remain presentation concerns, not blockers for the phase.
+The camera supports orbit/pitch/zoom configuration. The client world handles player replicas, board click targeting, and focus/hover information used by the board view.
 
 ## Phase 4 - Data-driven content framework
 
 ### Goal
 
-Move gameplay-facing authored content into explicit defs/resources that load, validate, and integrate cleanly with the runtime.
+Move prototype content into authored defs/resources and validate those links.
 
-### Completed in this phase
+### Status
 
-- `MapPresetDef`
-- `TileFamilyDef`
-- `TileVariantDef`
-- `RoleDef`
-- `SpawnLayoutDef`
-- `TileBehaviorDef`
-- content registry loading of authored resources
-- startup validation of authored resources and links
-- debug content inspection overlay
-- role assignment via authored role list
-- variant-linked scene visuals
-- variant-linked tile behavior ids
+Complete in practice.
 
-### Practical completion status
+### Current authored systems
 
-Phase 4 is functionally complete. The authored-content framework is real and working in the repo.
+- Map presets.
+- Tile families.
+- Tile variants.
+- Tile behaviors.
+- Roles.
+- Spawn layouts.
 
-### Optional cleanup / follow-up
+### Current validation
 
-- remove or implement the unused placeholder ids still present in `MapPresetDef.gd`
-- expand tile behaviors beyond the single standard baseline
-- deepen role content only when actual gameplay systems need it
+Startup validation checks core config/assets, content registry state, map preset values, spawn layout values, tile family/variant/behavior links, role presence, and client-side tile visual scene structure.
 
-### Exit criteria satisfied in practice
+## Phase 4b - Quality, stability, maintainability, and large-board support
 
-- content authors can add map/tile/role/behavior/spawn resources
-- those resources load through the registry
-- those resources are validated at startup
-- the runtime consumes authored content instead of hardcoded gameplay content in the core paths
-- debug tooling can inspect loaded content state
+### Goal
+
+Stabilize the Phase 4 foundation before Phase 5. Improve maintainability, validation, visual configurability, and large-board behavior.
+
+### Status
+
+In progress, with the major large-board foundation implemented.
+
+### Completed Phase 4b items
+
+- Default tile HP moved to config.
+- Visual/world values made configurable where currently useful.
+- Reveal images moved out of the project root into `assets/reveal_images/`.
+- Startup validation for tile visual scenes improved.
+- `MapPresetDef` cleanup started; `family_region_seed_search_radius_chunks` is implemented and used.
+- Chunk state is populated during board generation.
+- Board generation avoids all-seed-per-tile search by using local chunk-seed search.
+- Large boards use a MultiMesh full-board renderer path.
+- Tile deltas update MultiMesh state incrementally.
+- Initial board snapshots can be streamed instead of sent as one giant payload.
+- Streamed snapshots can use compact tile data.
+- Large board visuals build progressively across frames.
+- Loading/progress UI displays receiving/building stages.
+- Large boards use capped detailed tile overlays for nearby/hovered/recently changed important tiles.
+
+### Skipped or deferred Phase 4b items
+
+- Broad visual/lighting/palette changes were tested and reverted because the result was not desired yet.
+- Full script-folder reorganization is not being forced now; the current folder layout is domain-based and acceptable.
+- The optional board geometry helper is deferred unless future duplication or errors justify it.
+- Final large-board art direction is deferred.
+
+### Remaining Phase 4b recommendation
+
+Improve large-board visual richness/readability without adding per-tile scene instances everywhere. Good candidates are per-family MultiMesh grouping, subtle height/scale variation, chunk/region tinting, better distant tile material strategy, and more readable overlay rules.
 
 ## Phase 5 - Tool, charm, and inventory scaffolding
 
 ### Goal
 
-Add the first real gameplay-extension layer without breaking the server-authoritative board loop.
+Add the smallest useful server-authoritative equipment/inventory backbone.
+
+### Not started.
 
 ### Main work
 
-- authoritative inventory state
-- tool slot and charm slot scaffolding
-- data-authored item/resource definitions
-- tool/charm application hooks that can later affect reveal behavior, pacing, or utility
-- clear separation between runtime state and presentation/debug data
+- Add item/content defs.
+- Add authoritative inventory state.
+- Add Tool slot.
+- Add Charm slot.
+- Add server-authoritative replication for inventory/equipment state.
+- Keep role/tool/charm relationships flexible and data-driven.
 
 ### Important note
 
-Phase 5 should not turn into full progression or crafting scope. It should establish the first clean extension backbone for later design work.
+Do not start Phase 5 by inventing a full item economy. Start with the smallest useful framework that can support future tools and charms cleanly.
 
 ## Phase 6 - Map progression feedback and results
 
 ### Goal
 
-Add a player-facing sense of map progress and completion.
+Add player-facing feedback for completed maps and match results.
+
+### Not started.
 
 ### Main work
 
-- map-complete trigger flow
-- result / summary presentation
-- progress feedback around remaining tiles and board completion
-- any minimum progression feedback needed for internal tests
+- Detect map completion cleanly.
+- Display completion/results feedback.
+- Decide what data is shown after a map is completed.
+- Keep this separate from inventory/progression until those systems exist.
 
 ## Phase 7 - Internal hardening
 
 ### Goal
 
-Prepare the prototype for more reliable internal multiplayer testing.
+Prepare for smoother internal testing with friends.
+
+### Not started as a formal phase.
 
 ### Main work
 
-- bug fixing
-- clearer validation/errors
-- replication hardening
-- disconnect/rejoin edge cases
-- polish around startup and content iteration workflow
+- Improve error handling.
+- Improve reconnect/leave behavior.
+- Add more diagnostics for join/load failures.
+- Validate common server/client setup paths.
+- Tune board sizes and runtime config defaults for internal playtests.
 
-## 2. Recommended immediate work order
+## Recommended next work order
 
-1. Do the tiny `MapPresetDef` schema cleanup.
-2. Push the Phase 4 wrap-up branch.
-3. Start Phase 5 on a fresh branch.
-4. Implement minimal authoritative inventory and equipment-slot state.
-5. Add the first data-authored item defs needed for Tool and Charm.
+1. Finish the current Phase 4b large-board plan by improving distant-board readability/presentation.
+2. Run a manual test pass on small, medium, and large boards.
+3. Commit and push the Phase 4b progress.
+4. Start Phase 5 with item defs plus Tool/Charm equipment scaffolding.
 
-## 3. Milestone summary
+## Manual test checklist before starting Phase 5
 
-## Milestone A - Server-connected sandbox
+- Dedicated server starts without validation errors.
+- Client connects and passes hello/content-hash handshake.
+- 64 x 64 board joins and renders correctly.
+- 224 x 224 or larger board joins and renders correctly.
+- 384 x 384 or intended stress-test board joins, streams, builds visuals, and becomes interactive.
+- Loading/progress UI appears during long joins/builds and hides when ready.
+- Clicking/revealing a tile does not cause a noticeable full-board freeze.
+- Nearby/hovered/recent detail overlay does not flicker against the MultiMesh layer.
+- Player movement/camera remain smooth after loading.
 
-Achieved.
+## Discipline rules that still apply
 
-The project already supports dedicated server startup, client connection, session join, and world/bootstrap flow.
+### Do not backslide into hardcoded gameplay content
 
-## Milestone B - Fully playable shared board loop
+Use defs/resources/config for gameplay content and tuning.
 
-Achieved.
+### Separate runtime truth from presentation
 
-The board is shared, authoritative, and revealable in multiplayer.
+Board state and match state remain authoritative runtime truth. Visual scenes, MultiMeshes, debug UI, and loading UI remain presentation/observation.
 
-## Milestone C - 3D feel validation
+### Extend through framework hooks
 
-Achieved.
+Prefer existing content registry, startup validation, DTO, runtime service, and config patterns.
 
-The project already proves movement, orbit camera, camera-relative motion, and world-space board interaction.
+### Treat placeholder visuals as temporary presentation
 
-## Milestone D - Data-driven framework validation
-
-Achieved in practice.
-
-The content framework is real, authored, loaded, validated, and consumed by live runtime code.
-
-## Milestone E - Item backbone
-
-Not started.
-
-This is the clean next milestone.
-
-## Milestone F - Internal test candidate
-
-Not yet.
-
-This comes after Phase 5/6 work and another hardening pass.
-
-## 4. Discipline rules that still apply
-
-## 4.1 Do not backslide into hardcoded gameplay content
-
-Content that belongs in authored defs/resources should continue to move there, not back into gameplay scripts.
-
-## 4.2 Separate runtime truth from presentation
-
-Keep board state, player state, and future inventory/equipment state authoritative and explicit. Tile scenes and overlays must stay presentation-only.
-
-## 4.3 Extend through framework hooks
-
-Use the content framework, validators, and runtime service boundaries that already exist.
-
-## 4.4 Treat placeholder visuals as temporary presentation, not gameplay truth
-
-Current scene visuals are replaceable. They should not become the owner of board logic.
-
-## 5. Practical next-branch target
-
-**Phase 5 bootstrap:** add the minimum authoritative item/inventory/equipment scaffolding needed to support future Tool and Charm gameplay.
+The current prototype visuals are replaceable and should not become required gameplay architecture.

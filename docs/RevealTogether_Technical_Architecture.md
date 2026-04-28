@@ -2,303 +2,294 @@
 
 ## Purpose
 
-This document describes the actual current architecture in the repo, with emphasis on runtime ownership, content loading/validation, multiplayer authority, and the practical extension points that should be used next.
+This document describes the current architecture in the repo after Phase 4 and the Phase 4b large-board performance work.
 
-## Current implementation snapshot (2026-04-24)
+## Current implementation snapshot (2026-04-28)
 
 ### Implemented today
 
-- dedicated server bootstrap and runtime mode selection
-- content registry scanning/loading
-- startup validation
-- authoritative match/session service
-- board generation and reveal flow
-- 3D player movement and orbit camera
-- replicated player avatars
-- authored map preset, role, tile family, tile variant, spawn layout, and tile behavior resources
-- debug content inspection overlay
-- authored outside-the-map player spawning
-- authored edge-based initial unlock rules
+- Godot 4.6 project using Forward Plus and Jolt Physics.
+- Dedicated server, client, and local debug bootstrap scenes.
+- Runtime config loading through `RuntimeConfig`.
+- Logging through `LogService`.
+- Content loading through `ContentRegistry`.
+- Startup validation through `StartupValidator`.
+- Server-authoritative match/session flow through `MatchSessionService`.
+- Authoritative board generation, board state, chunk state, tile records, and reveal actions.
+- Chunk state population during board generation.
+- Local chunk-seed search for faster large-board family assignment.
+- Authored map presets, roles, spawn layouts, tile families, tile variants, and tile behaviors.
+- Server-owned player spawn, player state, and transform replication.
+- 3D client world with player replicas, orbit camera, configurable environment/lighting, and ground.
+- Board presentation through `BoardGridView3D`.
+- Large-board MultiMesh tile-cover rendering.
+- Incremental MultiMesh tile updates for board deltas.
+- Streamed join snapshots for large boards.
+- Compact streamed board snapshot payloads.
+- Progressive client-side MultiMesh visual build.
+- Loading/progress UI for snapshot receive and visual build stages.
+- Hybrid large-board detail overlay using capped authored `BoardTileVisual` scene instances.
+- Reveal image assets organized under `assets/reveal_images/`.
 
 ### Not implemented yet
 
-- authoritative inventory/equipment state
-- authored item resources
-- richer per-behavior tile gameplay logic
-- results / map-complete flow
-- broader progression systems
+- Authoritative item/inventory state.
+- Tool and Charm equipment slots.
+- Authored item definitions.
+- Map-complete/results flow.
+- Long-term progression.
+- Rich behavior-specific tile gameplay beyond the baseline reveal/clear behavior.
+- Final visual art direction.
 
 ## 1. Architecture principles
 
-## 1.1 Server owns gameplay truth
+### 1.1 Server owns gameplay truth
 
-The server remains authoritative for:
+The server owns authoritative match state, board state, player state, reveal validation, tile damage, tile clearing, and replication. Clients request actions and present replicated state.
 
-- match state
-- board state
-- reveal permission and reveal application
-- player runtime state
-- spawn planning
+### 1.2 Runtime truth and presentation stay separate
 
-Clients observe replicated truth and send requests.
+Runtime truth belongs in board/match/session classes. Visual scenes, MultiMeshes, overlays, debug UI, and loading UI must not become gameplay authorities.
 
-## 1.2 Data and presentation stay separate
+### 1.3 Content is authored and validated
 
-The repo already follows the right separation:
+Content should be added through resources/defs, registered by `ContentRegistry`, and checked by `StartupValidator` where possible.
 
-- board/tile state lives in runtime data structures
-- tile scenes are presentation
-- background image is presentation
-- debug overlay is observation, not ownership
+### 1.4 Large-board support uses batching, streaming, and layering
 
-## 1.3 Content must be authored and validated
+The project should keep whole-board visibility while using chunking, streaming, MultiMeshes, progressive visual build, and capped detail layers to control cost.
 
-Authored content is loaded through `ContentRegistry` and checked through `StartupValidator` before the game is allowed to continue booting.
+## 2. Current project structure
 
-## 1.4 Future systems should plug into extension points
+Important folders:
 
-The correct next moves are to extend the current runtime/content boundaries, not to replace them.
+- `autoload/app/` - global runtime services.
+- `assets/reveal_images/` - reveal image textures used by map presets.
+- `config/defaults/` - default app/client/server/local-debug config files.
+- `core/content/` - shared content base types.
+- `core/validation/` - startup validation.
+- `data/map_presets/` - authored map presets and `MapPresetDef`.
+- `data/roles/` - authored roles and `RoleDef`.
+- `data/tile_behaviors/` - authored tile behavior defs.
+- `data/tile_families/` - authored tile family defs.
+- `data/tile_variants/` - authored tile variant defs.
+- `data/tuning/spawn_layouts/` - authored spawn layout defs.
+- `game/client/camera/` - camera control code.
+- `game/runtime/board/` - authoritative board runtime state/services.
+- `game/runtime/match/` - authoritative match/player/spawn state.
+- `game/runtime/roles/` - role lookup helpers.
+- `net/protocol/` - DTO construction and protocol constants.
+- `net/session/` - multiplayer/session service.
+- `scenes/bootstrap/` - app/client/server/local debug startup scenes/scripts.
+- `scenes/debug/` - debug overlays.
+- `scenes/ui/` - runtime UI such as loading/progress overlay.
+- `scenes/world/` - client world, board visuals, tile visuals, and player replicas.
 
-## 2. Actual project structure in the repo
+## 3. Bootstrap and app services
 
-Key areas in the current repo:
+### `AppBootstrap`
 
-- `autoload/app/`
-  - bootstrap, runtime config, logging, content registry
-- `core/validation/`
-  - startup validation
-- `data/`
-  - authored gameplay-facing content defs/resources
-- `game/runtime/board/`
-  - board state, tile records, builder, reveal service, content lookup helper
-- `game/runtime/match/`
-  - match state, player state, spawn planner
-- `game/runtime/roles/`
-  - role content lookup helper
-- `net/session/`
-  - session/match multiplayer service
-- `scenes/world/`
-  - client world, board view, player pawn/camera, visual scenes
-- `scenes/debug/`
-  - content inspection overlay
+Selects and enters the correct bootstrap scene for the configured runtime mode.
 
-## 3. Bootstrap and runtime ownership
+### `RuntimeConfig`
 
-## 3.1 `AppBootstrap`
+Provides config values from default config files. Gameplay and presentation tuning should prefer config/resources over hardcoded script constants.
 
-Owns startup sequence and uses content/validation/runtime config before advancing into the correct bootstrap scene.
+### `LogService`
 
-## 3.2 `RuntimeConfig`
+Central logging utility used across boot, networking, world, and validation paths.
 
-Owns runtime-mode and config-file resolution, including dedicated server vs client bootstrap selection.
+### `ContentRegistry`
 
-## 3.3 `ContentRegistry`
+Loads registered content from configured content directories and computes the content manifest hash used in the client/server handshake.
 
-Scans configured content directories, loads resources, registers them by content id, and exposes manifest/warning/state access.
+### `StartupValidator`
 
-## 3.4 `StartupValidator`
+Validates required runtime assets, config, content links, map preset values, spawn layout values, role presence, tile family/variant/behavior links, and client-side tile visual scenes. Dedicated server mode skips tile visual scene instantiation checks because visual scenes are client presentation assets.
 
-Validates:
+## 4. Networking and session ownership
 
-- runtime config
-- required scene config
-- map preset availability
-- spawn layout availability
-- tile family/variant relationships
-- role resources
-- tile behavior resources and variant links
+### `MatchSessionService`
 
-## 4. Current authoritative multiplayer/session model
+Owns the multiplayer/session boundary. Responsibilities include:
 
-## 4.1 `MatchSessionService`
+- hello/protocol/content-hash handshake,
+- join-match handling,
+- player spawn/despawn replication,
+- player transform replication,
+- board delta replication,
+- join snapshot delivery,
+- streamed board snapshot receive/reassembly on clients,
+- compact streamed snapshot send/expand paths for large boards.
 
-This service remains the main networked authority boundary. It currently handles:
+### Join/bootstrap replication flow
 
-- host/client session lifecycle
-- join snapshot delivery
-- board reveal requests
-- player runtime synchronization
-- role assignment on join
-- board snapshot/update RPC flow
+For small boards, normal join snapshot delivery can still be used. For boards above the configured threshold, the server sends:
 
-## 4.2 Join/bootstrap replication flow
+1. a join snapshot header/metadata payload,
+2. streamed board snapshot chunks,
+3. a completion signal once all chunks arrive and are reassembled.
 
-Current high-level flow:
+When compact streaming is enabled, tile data is packed into palette/index/flag arrays and expanded back into normal tile snapshot dictionaries on the client before the normal joined-match flow continues.
 
-1. client connects
-2. client joins match
-3. server assembles snapshot
-4. client receives snapshot
-5. client world builds/applies board and player state
+### Ongoing replication model
 
-## 4.3 Ongoing replication model
+After join, the server sends board deltas and player transform updates. Board deltas are applied incrementally to cached tile snapshots and presentation state.
 
-The current repo uses explicit RPC/data transfer rather than implicit scene-authority gameplay. This is the right direction and should be preserved.
+## 5. Match/runtime state model
 
-## 5. Current match/runtime state model
+### `MatchState`
 
-## 5.1 `MatchState`
+Owns the running match state: match id, board state, player states, map preset, and match-level values.
 
-Holds board and player state for the running match.
+### `MatchPlayerState`
 
-## 5.2 `MatchPlayerState`
+Owns per-player authoritative state used by the match/session flow.
 
-Represents a player in runtime state, including position-related data and the authored role id assigned for that player.
+### `MatchSpawnPlanner`
 
-## 5.3 `MatchSpawnPlanner`
+Uses authored `SpawnLayoutDef` data to place players outside the board perimeter.
 
-Resolves player spawn positions from authored spawn layouts. The active sandbox preset currently uses the outer-perimeter layout so players spawn outside the map boundary instead of in an inner ring.
+## 6. Board runtime model
 
-## 6. Current board runtime model
+### `BoardState`
 
-## 6.1 `BoardState`
+Owns board dimensions, chunks, tile records, dirty tile tracking, and summary/snapshot data.
 
-Owns the authoritative board dimensions, tile collection, chunk collection, and summary helpers.
+### `TileRecord`
 
-## 6.2 `TileRecord`
+Represents authoritative per-tile state such as tile index, grid position, chunk index, variant id, unlock/clear state, HP, claim state, last damage data, and UV rect.
 
-Owns per-tile truth including:
+### `ChunkState`
 
-- coordinates
-- reveal/locked state
-- family id
-- variant id
-- behavior id
+Represents chunk metadata and tile membership. It is now populated during board generation and can support current/future dirty tracking, diagnostics, streaming, and chunk-level organization.
 
-This is important: tile scenes do not own this data.
+### `BoardBuilder`
 
-## 6.3 `ChunkState`
+Builds the authoritative board from `MapPresetDef`, tile family/variant content, and spawn/unlock settings. It uses local chunk-seed search controlled by `family_region_seed_search_radius_chunks` instead of comparing every tile against every chunk seed.
 
-Provides chunk-level structure for board organization and generation support.
+### `BoardActionService`
 
-## 6.4 `BoardBuilder`
+Validates and applies board interactions such as reveal/damage/clear behavior. It should remain server-side gameplay logic.
 
-Builds board state from authored map-preset data and authored tile content. It currently handles:
+## 7. Content model
 
-- board size and chunk layout
-- region-style family assignment
-- variant selection inside families
-- behavior id propagation from variants
-- initial edge unlock setup
-- authored spawn-layout usage through the wider match flow
-
-## 6.5 `BoardActionService`
-
-Applies authoritative reveal logic and board mutations on the server.
-
-## 7. Current content model
-
-## 7.1 Supported authored resource types
-
-Current supported authored resource types in the repo:
+### Supported authored resource types
 
 - `MapPresetDef`
 - `TileFamilyDef`
 - `TileVariantDef`
+- `TileBehaviorDef`
 - `RoleDef`
 - `SpawnLayoutDef`
-- `TileBehaviorDef`
 
-## 7.2 Current authored content slice
-
-Current repo snapshot includes:
+### Current authored content slice
 
 - 1 map preset
 - 2 tile families
 - 2 tile variants
+- 1 tile behavior
 - 4 roles
 - 2 spawn layouts
-- 1 tile behavior
 
-## 7.3 Current family/variant responsibilities
+### Current visual-content link
 
-- Map preset: board size, reveal image, unlock tuning, region tuning, spawn layout id
-- Tile family: broad thematic bucket and weighted region assignment
-- Tile variant: family membership, behavior link, weighted variant selection, visual scene
-- Role: authored player identity list used by runtime role assignment
-- Spawn layout: authored spawn-position strategy/tuning
-- Tile behavior: authored behavior identity resource for tile behavior links
+Tile variants point to visual scenes. `BoardGridView3D` may instantiate those scenes directly on small boards or selectively as a large-board detail overlay. Tile visual scenes remain presentation-only.
 
-## 7.4 Current lookup helpers
+## 8. Client world and presentation model
 
-- `BoardTileContentCatalog` resolves authored tile families, variants, and behaviors
-- `RoleContentCatalog` resolves authored roles
+### `ClientSandboxWorld`
 
-## 8. Current client world/presentation model
+Owns the local client presentation scene. Responsibilities include:
 
-## 8.1 `ClientSandboxWorld`
+- connecting to `MatchSessionService` signals,
+- instantiating board view and player replicas,
+- configuring camera and viewport rendering,
+- forwarding click/reveal requests,
+- forwarding focus/hover information to the board view,
+- showing loading/progress UI for snapshot and visual-build phases.
 
-Coordinates:
+### `BoardGridView3D`
 
-- world bootstrap
-- board snapshot application
-- player/world integration
-- click interaction path
+Owns board presentation. Current responsibilities include:
 
-## 8.2 Current interaction path
+- board base and reveal underlay,
+- chunk lines when enabled,
+- small-board detailed tile scene rendering,
+- large-board MultiMesh rendering,
+- incremental MultiMesh tile updates,
+- progressive visual build,
+- hybrid large-board detail overlay,
+- detail focus/hover/recent-change prioritization,
+- board visual build signals for loading UI.
 
-Current reveal path:
+### `LoadingProgressOverlay`
 
-1. client raycasts/selects tile world interaction
-2. client sends reveal request
-3. server validates/apply reveal
-4. replicated board state updates client view
+A lightweight client-side UI node created from code when enabled by config. It displays current loading stage, detail text, and progress while receiving board snapshots and building board visuals.
 
-## 8.3 `BoardGridView3D`
+### `BoardTileVisual`
 
-Builds the visible board representation. It uses scene-based tile visuals, but those visuals are downstream of runtime tile data and content ids.
+Base class for authored tile visual scenes. Visuals can respond to presentation state but must not own gameplay truth.
 
-## 8.4 `BoardTileVisual`
+## 9. Config areas to know
 
-Holds presentation logic for current placeholder visuals.
+Important config sections in `config/defaults/app.cfg` include:
 
-## 8.5 Current placeholder asset strategy
+- `[board_actions]`
+- `[board_view]`
+- `[camera_rig]`
+- `[client_world]`
+- `[loading_progress_ui]`
+- `[match]`
+- `[movement]`
+- `[network]`
+- `[rendering_3d]`
+- `[replication]`
+- `[content_directories]`
 
-Current tile visuals are cube-like placeholder scenes. They are sufficient for prototype playtesting and are not structural architecture.
-
-## 9. Current camera/player presentation model
-
-## 9.1 `PlayerOrbitCameraRigController`
-
-Provides orbit/pitch/zoom style camera behavior for the local player.
-
-## 9.2 `PlayerReplicaAvatar`
-
-Represents remote players visually in the world.
+Large-board tuning currently lives mainly under `[board_view]` and `[replication]`.
 
 ## 10. Current known gaps and next architectural work
 
-## 10.1 Still-missing gameplay framework slices
+### Still-missing gameplay framework slices
 
-- authoritative inventory state
-- authored item definitions
-- equipment/tool/charm runtime scaffolding
-- richer behavior execution logic beyond the current baseline content link
+- Item defs.
+- Inventory runtime state.
+- Equipment runtime state.
+- Tool slot.
+- Charm slot.
+- Replication for inventory/equipment.
 
-## 10.2 Still-missing match experience slices
+### Still-missing match experience slices
 
-- map completion flow
-- results/summary flow
-- stronger playtest-facing feedback layers
+- Map completion detection as a player-facing flow.
+- Results screen or summary.
+- Better progression/reward feedback.
 
-## 10.3 Small schema cleanup still visible
+### Remaining large-board presentation work
 
-`MapPresetDef.gd` still contains placeholder ids for future content domains that are not active in the current repo. Those should either be removed or turned into real authored content domains before they become misleading.
+- Richer distant tile/family readability without per-tile scenes everywhere.
+- Better art direction for sky, shadows, palette, tile height, overlays, and region identity.
+- More explicit profiling/tuning targets for supported board sizes.
 
 ## 11. Architecture rules for future changes
 
-## 11.1 Do not move board truth into tile scenes
+### Do not move board truth into tile scenes
 
-Tile scenes remain replaceable presentation.
+Tile scenes and MultiMeshes are presentation layers only.
 
-## 11.2 Do not hardcode future content directly into gameplay scripts
+### Do not hardcode future content directly into gameplay scripts
 
-Continue extending through defs/resources, registries, validators, and explicit runtime systems.
+Add content through defs/resources/config and validate it.
 
-## 11.3 Keep networking DTOs explicit
+### Keep networking DTOs explicit
 
-The current explicit multiplayer flow is safer than hiding gameplay truth inside scene ownership.
+Replication changes should go through clear DTO builders/readers and versioned/understandable payload shapes.
 
-## 11.4 Keep runtime truth separate from debug helpers
+### Keep large-board systems layered
 
-The debug content overlay is useful and should stay observational only.
+Full-board rendering, detail overlays, streaming, and runtime truth should remain separate systems with explicit responsibilities.
+
+### Keep debug and loading UI observational
+
+Debug overlays and loading UI should observe state/progress, not own gameplay state.

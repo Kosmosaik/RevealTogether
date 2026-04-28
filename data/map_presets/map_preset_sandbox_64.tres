@@ -1,14 +1,14 @@
 [gd_resource type="Resource" script_class="MapPresetDef" format=3 uid="uid://dx3otn1bbjko3"]
 
 [ext_resource type="Script" uid="uid://bh7u8kcndast2" path="res://data/map_presets/MapPresetDef.gd" id="1_qfyxd"]
-[ext_resource type="Texture2D" uid="uid://cqp43vjd0x0a8" path="res://assets/reveal_images/320_200_rhino_hill.png" id="1_rbeyl"]
+[ext_resource type="Texture2D" uid="uid://ckwunosrj8hy6" path="res://assets/reveal_images/200_200_hiking.png" id="1_rbeyl"]
 
 [resource]
 script = ExtResource("1_qfyxd")
-board_width = 320
-board_height = 200
-chunk_width = 20
-chunk_height = 20
+board_width = 100
+board_height = 100
+chunk_width = 10
+chunk_height = 10
 start_unlock_outer_edge_ratio = 0.1
 start_unlock_outer_edge_randomness = 0.9
 final_rush_remaining_tiles_threshold = 200

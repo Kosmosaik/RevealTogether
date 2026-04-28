@@ -2,41 +2,57 @@
 
 ## Purpose
 
-This document is the condensed technical/design handoff for the current repo state. It combines the most important implementation truths, phase status, and extension rules into one place.
+This is the condensed handoff/spec for the current RevealTogether repo state. It combines the important implementation truth, phase status, architecture rules, and next-step direction.
 
-## Current implementation snapshot (2026-04-24)
+## Current implementation snapshot (2026-04-28)
 
 ### Already implemented
 
-- dedicated server runtime and client bootstrap flow
-- authoritative board generation and reveal loop
-- board snapshot/join replication
-- 3D player controller and orbit camera
-- replicated player avatars
-- authored map presets
-- authored tile families and tile variants
-- authored roles
-- authored spawn layouts
-- authored tile behaviors
-- content registry and startup validation
-- content inspection overlay
-- outside-the-map spawning through authored layout data
-- percentage-based outer-edge initial tile unlocks
-- organic/distorted family region assignment for the current board
+- Dedicated server, client, and local debug bootstrap flow.
+- Protocol/content-hash hello handshake.
+- Server-authoritative match/session service.
+- Authoritative board generation and reveal loop.
+- Board snapshot/join replication.
+- Streamed initial board snapshots for large boards.
+- Compact streamed board snapshot payloads.
+- Board delta replication.
+- 3D player controller and orbit camera.
+- Replicated player avatars.
+- Authored map preset, tile families, tile variants, tile behavior, roles, and spawn layouts.
+- Content registry and startup validation.
+- Client-side tile visual scene validation.
+- Content inspection overlay.
+- Outside-the-map spawning through authored layout data.
+- Percentage-based outer-edge initial tile unlocks.
+- Organic/distorted family region assignment.
+- Local chunk-seed search for large-board generation performance.
+- Populated chunk state during board generation.
+- MultiMesh full-board renderer path for large boards.
+- Incremental MultiMesh board delta updates.
+- Hybrid capped detail overlay for large boards.
+- Progressive client-side board visual build.
+- Loading/progress UI for board snapshot receive and visual build.
+- Configurable environment/lighting/rendering values.
+- Reveal image assets under `assets/reveal_images/`.
 
 ### Not implemented yet
 
-- authoritative inventory/equipment state
-- authored item definitions
-- results/map-complete flow
-- richer progression systems
-- more varied behavior-specific tile gameplay
+- Authoritative inventory/equipment state.
+- Tool and Charm slots.
+- Authored item definitions.
+- Results/map-complete flow.
+- Rich progression systems.
+- More varied behavior-specific tile gameplay.
+- Final visual polish/art direction.
 
 ## 1. Current repo structure
 
 Important current areas:
 
 - `autoload/app/`
+- `assets/reveal_images/`
+- `config/defaults/`
+- `core/content/`
 - `core/validation/`
 - `data/map_presets/`
 - `data/roles/`
@@ -44,159 +60,178 @@ Important current areas:
 - `data/tile_families/`
 - `data/tile_variants/`
 - `data/tuning/spawn_layouts/`
+- `game/client/camera/`
 - `game/runtime/board/`
 - `game/runtime/match/`
 - `game/runtime/roles/`
+- `net/protocol/`
 - `net/session/`
+- `scenes/bootstrap/`
 - `scenes/debug/`
+- `scenes/ui/`
 - `scenes/world/`
 
 ## 2. Current runtime ownership model
 
-## 2.1 Bootstrap and content
+### Bootstrap and content
 
-`AppBootstrap`, `RuntimeConfig`, `ContentRegistry`, and `StartupValidator` own the startup/content-validation path.
+`AppBootstrap`, `RuntimeConfig`, `LogService`, `ContentRegistry`, and `StartupValidator` own startup/config/content loading and validation.
 
-## 2.2 Multiplayer/session ownership
+### Multiplayer/session ownership
 
-`MatchSessionService` owns the session/match networking boundary.
+`MatchSessionService` owns the networking/session boundary, including handshake, join, snapshot streaming, compact snapshot transport, player replication, and board delta replication.
 
-## 2.3 Match runtime ownership
+### Match runtime ownership
 
-`MatchState`, `MatchPlayerState`, and `MatchSpawnPlanner` own running-match state and spawn planning.
+`MatchState`, `MatchPlayerState`, and `MatchSpawnPlanner` own running match/player/spawn state.
 
-## 2.4 Board runtime ownership
+### Board runtime ownership
 
-`BoardState`, `TileRecord`, `ChunkState`, `BoardBuilder`, and `BoardActionService` own board truth.
+`BoardState`, `TileRecord`, `ChunkState`, `BoardBuilder`, and `BoardActionService` own authoritative board truth.
 
-## 2.5 Client presentation ownership
+### Client presentation ownership
 
-`ClientSandboxWorld`, `BoardGridView3D`, `BoardTileVisual`, player/camera scenes, and the content overlay own presentation/debug observation only.
+`ClientSandboxWorld`, `BoardGridView3D`, `BoardTileVisual`, `LoadingProgressOverlay`, player/camera scenes, and debug overlays own presentation/observation only.
 
 ## 3. Current supported content model
 
-## 3.1 Supported resource types today
+### Supported resource types today
 
 - `MapPresetDef`
 - `TileFamilyDef`
 - `TileVariantDef`
+- `TileBehaviorDef`
 - `RoleDef`
 - `SpawnLayoutDef`
-- `TileBehaviorDef`
 
-## 3.2 Current authored content slice
+### Current authored content slice
 
-- 1 map preset
-- 2 tile families
-- 2 tile variants
-- 4 roles
-- 2 spawn layouts
-- 1 tile behavior
-
-## 3.3 Current visual-content link
-
-Map presets drive board/image/tuning. Tile variants point to visual scenes and behavior ids. Runtime state carries those ids. Scene visuals remain presentation and can be replaced later.
+- `map_preset.sandbox_64`
+- `tile_family.overgrowth`
+- `tile_family.scrap`
+- `tile_variant.overgrowth_patch`
+- `tile_variant.scrap_plate`
+- `tile_behavior.standard_reveal_clear`
+- `role.archaeologist`
+- `role.groundkeeper`
+- `role.hacker`
+- `role.scavenger`
+- `spawn_layout.sandbox_outer_perimeter`
+- `spawn_layout.sandbox_ring_8`
 
 ## 4. Current playable loop
 
 1. Start dedicated server.
 2. Connect client.
 3. Join match and receive authoritative snapshot.
-4. Spawn outside the board through authored spawn layout data.
-5. Move around the world with the 3D controller and orbit camera.
-6. Approach available edge tiles.
-7. Click to request reveal.
-8. Let the server validate and apply reveal.
-9. Continue clearing inward on the shared board.
+4. For large boards, receive streamed/compact board snapshot chunks and build visuals progressively.
+5. Spawn outside the board through authored spawn layout data.
+6. Move around the world with the 3D controller and orbit camera.
+7. Approach available edge tiles.
+8. Click to request reveal.
+9. Let the server validate and apply reveal.
+10. Continue clearing inward on the shared board.
 
 ## 5. Current implementation-phase truth
 
-## Phase 0 - Project skeleton
+### Phase 0 - Project skeleton
 
 Complete.
 
-## Phase 1 - Dedicated server loop
+### Phase 1 - Dedicated server loop
 
 Complete.
 
-## Phase 2 - Board and reveal core
+### Phase 2 - Board and reveal core
 
 Complete.
 
-## Phase 3 - 3D player controller and camera
+### Phase 3 - 3D player controller and camera
 
 Complete.
 
-## Phase 4 - Data-driven content framework
+### Phase 4 - Data-driven content framework
 
-Functionally complete in practice.
+Complete in practice.
 
-What exists now:
+### Phase 4b - Quality/stability/large-board support
 
-- authored content defs/resources for the current prototype slice
-- registry loading
-- startup validation
-- tile-family/variant/behavior links
-- authored role assignment
-- authored spawn layout selection
-- content inspection/debug visibility
+In progress, with the major large-board foundation implemented.
 
-Small remaining cleanup:
+Implemented Phase 4b work includes:
 
-- remove or implement the unused placeholder ids still present on `MapPresetDef.gd`
+- config cleanup/use for tile HP and view settings,
+- reveal asset relocation,
+- stronger visual content validation,
+- chunk state population,
+- faster board generation through local chunk seed search,
+- large-board MultiMesh rendering,
+- incremental tile delta updates,
+- streamed snapshots,
+- compact streamed snapshots,
+- progressive visual build,
+- loading/progress UI,
+- capped detailed visual overlay.
 
-## Phase 5 - Tool/charm/inventory scaffolding
+Remaining Phase 4b work should focus on large-board visual richness/readability and final tuning.
 
-Not started. This is the clean next phase.
+### Phase 5 - Tool/charm/inventory scaffolding
 
-## Phase 6 - Results/map-complete flow
+Not started. This is the next gameplay phase after Phase 4b is wrapped or intentionally paused.
+
+### Phase 6 - Results/map-complete flow
 
 Not started.
 
-## Phase 7 - Hardening and internal-test preparation
+### Phase 7 - Hardening and internal-test preparation
 
-Not started.
+Not started as a formal phase.
 
 ## 6. Recommended next milestone
 
-Start Phase 5 with the smallest useful authoritative item/equipment backbone:
+Finish the remaining Phase 4b large-board presentation work, then commit/push. After that, start Phase 5 with the smallest useful authoritative item/equipment backbone:
 
-- inventory runtime state
-- Tool slot
-- Charm slot
-- first authored item defs needed to support those systems
-- clean server-authoritative replication path for those additions
+- item defs,
+- inventory runtime state,
+- Tool slot,
+- Charm slot,
+- server-authoritative replication path.
 
 ## 7. Locked architecture rules
 
-## 7.1 Server authority remains non-negotiable
+### Server authority remains non-negotiable
 
 Gameplay truth stays server-owned.
 
-## 7.2 Presentation must not become gameplay truth
+### Presentation must not become gameplay truth
 
-Tile scenes, board visuals, and debug overlays must not own board logic.
+Tile scenes, MultiMeshes, board visuals, loading UI, and debug overlays must not own board logic.
 
-## 7.3 Content should be added through defs/resources
+### Content should be added through defs/resources
 
 Continue extending through authored resources, registry loading, validation, and runtime services.
 
-## 7.4 Placeholder visuals are replaceable, not structural
+### Large-board support should preserve full-board visibility
 
-The current scene-based placeholder visuals are fine for prototype iteration and can be swapped later.
+Do not solve performance by hiding most of the board unless the design direction changes. Prefer streaming, batching, MultiMeshes, LOD/detail layers, and better materials.
 
-## 7.5 Debug systems should observe truth, not own it
+### Placeholder visuals are replaceable, not structural
 
-The content inspection overlay is for visibility only.
+The current prototype visuals are fine for iteration and can be swapped later.
+
+### Debug/loading systems should observe truth, not own it
+
+Debug and loading UI should display state/progress only.
 
 ## 8. Known deliberate gaps
 
-- no item/inventory implementation yet
-- no results/completion layer yet
-- only one baseline tile behavior asset exists today
-- role content is still light by design
-- `MapPresetDef.gd` still exposes a few future-facing placeholder ids that are not active content domains yet
+- no item/inventory implementation yet,
+- no results/completion layer yet,
+- only one baseline tile behavior asset exists today,
+- role content is still light by design,
+- distant large-board visual richness still needs polish,
+- final environment/lighting/art direction is not locked.
 
 ## 9. Summary
 
-The project is now beyond foundation work. The server-authoritative board loop, 3D world interaction, and authored content framework are already real. The clean next step is no longer more framework invention; it is Phase 5 gameplay-extension scaffolding.
+RevealTogether now has a real server-authoritative board loop, 3D world interaction, authored content, and large-board loading/rendering foundation. The clean next step is either to finish Phase 4b visual/readability polish or to move into Phase 5 item/tool/charm scaffolding once the current large-board work is committed.
