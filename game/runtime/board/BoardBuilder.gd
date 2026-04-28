@@ -28,7 +28,7 @@ static func build_board_state_from_map_preset(map_preset_def: MapPresetDef) -> B
 		tile_record.tile_id = tile_index
 		tile_record.grid_x = tile_coords.x
 		tile_record.grid_y = tile_coords.y
-		tile_record.chunk_index = board_state.get_chunk_index_for_grid(tile_record.grid_x, tile_record.grid_y)
+		_register_tile_with_chunk(board_state, tile_record)
 		tile_record.max_hp = default_tile_hp
 		tile_record.current_hp = default_tile_hp
 		tile_record.uv_rect = _build_full_board_uv_rect(board_state, tile_record.grid_x, tile_record.grid_y)
@@ -44,6 +44,25 @@ static func build_board_state_from_map_preset(map_preset_def: MapPresetDef) -> B
 	)
 
 	return board_state
+
+static func _register_tile_with_chunk(board_state: BoardState, tile_record: TileRecord) -> void:
+	if board_state == null:
+		return
+	if tile_record == null:
+		return
+
+	var chunk_coords: Vector2i = board_state.get_chunk_coords_from_grid(tile_record.grid_x, tile_record.grid_y)
+	if chunk_coords.x < 0 or chunk_coords.y < 0:
+		tile_record.chunk_index = -1
+		return
+
+	var chunk_state: ChunkState = board_state.ensure_chunk_state(chunk_coords.x, chunk_coords.y)
+	if chunk_state == null:
+		tile_record.chunk_index = -1
+		return
+
+	tile_record.chunk_index = chunk_state.chunk_index
+	chunk_state.add_tile_index(tile_record.tile_index)
 
 static func _build_full_board_uv_rect(board_state: BoardState, grid_x: int, grid_y: int) -> Rect2:
 	if board_state.board_width <= 0 or board_state.board_height <= 0:
@@ -62,17 +81,24 @@ static func _assign_procedural_tile_content(board_state: BoardState, map_preset_
 
 	var variant_list_by_family_id: Dictionary = BoardTileContentCatalog.build_variant_list_by_family_id()
 	var variant_by_id: Dictionary = BoardTileContentCatalog.build_variant_by_id()
-	var chunk_seed_list: Array = _build_chunk_seed_list(board_state, family_list)
-	if chunk_seed_list.is_empty():
+	var chunk_seed_by_chunk_index: Dictionary = _build_chunk_seed_by_chunk_index(board_state, family_list)
+	if chunk_seed_by_chunk_index.is_empty():
 		return
 
 	var family_region_noise_bundle: Dictionary = _build_family_region_noise_bundle(board_state, map_preset_def)
+	var seed_search_radius_chunks: int = max(map_preset_def.family_region_seed_search_radius_chunks, 0)
 
 	for tile_record in board_state.tiles:
 		if tile_record == null:
 			continue
 
-		var selected_family_id: StringName = _select_family_id_for_tile(tile_record, chunk_seed_list, family_region_noise_bundle)
+		var selected_family_id: StringName = _select_family_id_for_tile(
+			tile_record,
+			board_state,
+			chunk_seed_by_chunk_index,
+			seed_search_radius_chunks,
+			family_region_noise_bundle
+		)
 		var selected_variant_id: StringName = _select_variant_id_for_tile(tile_record, selected_family_id, variant_list_by_family_id)
 
 		tile_record.family_id = selected_family_id
@@ -92,8 +118,12 @@ static func _resolve_behavior_id_for_variant(variant_id: StringName, variant_by_
 
 	return tile_variant_def.behavior_id
 
-static func _build_chunk_seed_list(board_state: BoardState, family_list: Array[TileFamilyDef]) -> Array:
-	var chunk_seed_list: Array = []
+static func _build_chunk_seed_by_chunk_index(board_state: BoardState, family_list: Array[TileFamilyDef]) -> Dictionary:
+	var chunk_seed_by_chunk_index: Dictionary = {}
+	if board_state == null:
+		return chunk_seed_by_chunk_index
+	if family_list.is_empty():
+		return chunk_seed_by_chunk_index
 
 	for chunk_y in range(board_state.get_chunk_rows()):
 		for chunk_x in range(board_state.get_chunk_columns()):
@@ -128,12 +158,18 @@ static func _build_chunk_seed_list(board_state: BoardState, family_list: Array[T
 				chunk_span_y
 			)
 
-			chunk_seed_list.append({
-				"family_id": selected_family_id,
-				"grid_position": Vector2(seed_grid_x, seed_grid_y)
-			})
+			var chunk_index: int = board_state.get_chunk_index_from_coords(chunk_x, chunk_y)
+			if chunk_index == -1:
+				continue
 
-	return chunk_seed_list
+			chunk_seed_by_chunk_index[chunk_index] = {
+				"family_id": selected_family_id,
+				"grid_position": Vector2(seed_grid_x, seed_grid_y),
+				"chunk_x": chunk_x,
+				"chunk_y": chunk_y
+			}
+
+	return chunk_seed_by_chunk_index
 
 static func _build_family_region_noise_bundle(board_state: BoardState, map_preset_def: MapPresetDef) -> Dictionary:
 	var family_region_noise_bundle: Dictionary = {}
@@ -167,23 +203,42 @@ static func _build_family_region_noise_bundle(board_state: BoardState, map_prese
 	family_region_noise_bundle["warp_strength"] = map_preset_def.family_region_warp_strength
 	return family_region_noise_bundle
 
-static func _select_family_id_for_tile(tile_record: TileRecord, chunk_seed_list: Array, family_region_noise_bundle: Dictionary) -> StringName:
+static func _select_family_id_for_tile(
+	tile_record: TileRecord,
+	board_state: BoardState,
+	chunk_seed_by_chunk_index: Dictionary,
+	seed_search_radius_chunks: int,
+	family_region_noise_bundle: Dictionary
+) -> StringName:
 	var closest_distance_squared: float = INF
 	var closest_family_id: StringName = &""
 	var tile_sample_position: Vector2 = _build_family_region_sample_position(tile_record, family_region_noise_bundle)
+	var tile_chunk_coords: Vector2i = board_state.get_chunk_coords_from_grid(tile_record.grid_x, tile_record.grid_y)
 
-	for chunk_seed_variant in chunk_seed_list:
-		var chunk_seed: Dictionary = chunk_seed_variant as Dictionary
-		var seed_position: Vector2 = chunk_seed.get("grid_position", Vector2.ZERO)
-		var family_id: StringName = chunk_seed.get("family_id", &"")
+	var min_chunk_x: int = max(tile_chunk_coords.x - seed_search_radius_chunks, 0)
+	var max_chunk_x: int = min(tile_chunk_coords.x + seed_search_radius_chunks, board_state.get_chunk_columns() - 1)
+	var min_chunk_y: int = max(tile_chunk_coords.y - seed_search_radius_chunks, 0)
+	var max_chunk_y: int = min(tile_chunk_coords.y + seed_search_radius_chunks, board_state.get_chunk_rows() - 1)
 
-		var delta_x: float = tile_sample_position.x - seed_position.x
-		var delta_y: float = tile_sample_position.y - seed_position.y
-		var distance_squared: float = (delta_x * delta_x) + (delta_y * delta_y)
+	for chunk_y in range(min_chunk_y, max_chunk_y + 1):
+		for chunk_x in range(min_chunk_x, max_chunk_x + 1):
+			var chunk_index: int = board_state.get_chunk_index_from_coords(chunk_x, chunk_y)
+			if chunk_index == -1:
+				continue
+			if not chunk_seed_by_chunk_index.has(chunk_index):
+				continue
 
-		if distance_squared < closest_distance_squared:
-			closest_distance_squared = distance_squared
-			closest_family_id = family_id
+			var chunk_seed: Dictionary = chunk_seed_by_chunk_index[chunk_index] as Dictionary
+			var seed_position: Vector2 = chunk_seed.get("grid_position", Vector2.ZERO)
+			var family_id: StringName = chunk_seed.get("family_id", &"")
+
+			var delta_x: float = tile_sample_position.x - seed_position.x
+			var delta_y: float = tile_sample_position.y - seed_position.y
+			var distance_squared: float = (delta_x * delta_x) + (delta_y * delta_y)
+
+			if distance_squared < closest_distance_squared:
+				closest_distance_squared = distance_squared
+				closest_family_id = family_id
 
 	return closest_family_id
 

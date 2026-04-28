@@ -1,6 +1,8 @@
 extends Node3D
 
 const PlayerOrbitCameraRigControllerScript = preload("res://game/client/camera/PlayerOrbitCameraRigController.gd")
+const LoadingProgressOverlayScript = preload("res://scenes/ui/LoadingProgressOverlay.gd")
+
 @onready var _world_environment: WorldEnvironment = $WorldEnvironment
 @onready var _sun_light: DirectionalLight3D = $SunLight
 @onready var _ground_body: StaticBody3D = $Ground
@@ -17,6 +19,7 @@ var _board_view: BoardGridView3D = null
 var _player_avatar_by_peer_id: Dictionary = {}
 var _local_peer_id: int = 0
 var _camera_controller: RefCounted = null
+var _loading_progress_overlay = null
 
 var _local_move_request_accumulator_sec: float = 0.0
 var _local_last_submitted_action_state: StringName = NetProtocol.ACTION_STATE_IDLE
@@ -26,6 +29,7 @@ func _ready() -> void:
 	_configure_ground()
 	_configure_camera()
 	_configure_viewport_rendering()
+	_configure_loading_progress_overlay()
 
 	_board_view_scene = _load_board_view_scene()
 	_instantiate_board_view()
@@ -37,6 +41,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_update_local_player_movement(delta)
 	_update_camera_follow(delta)
+	_update_board_detail_focus()
 	
 func _unhandled_input(event: InputEvent) -> void:
 	if _camera_controller != null and _camera_controller.handle_input(event):
@@ -55,6 +60,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if _board_view == null:
 		return
+	if not _board_view.is_board_ready_for_interaction():
+		return
 
 	var hit_position_variant: Variant = _intersect_mouse_with_board_plane(mouse_button_event.position)
 	if hit_position_variant == null:
@@ -65,6 +72,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if tile_index < 0:
 		return
 
+	_board_view.mark_detail_tile_important(tile_index)
 	_match_session_service.request_reveal_tile(tile_index)
 
 func _configure_environment() -> void:
@@ -225,10 +233,23 @@ func _instantiate_board_view() -> void:
 	_board_view.name = "BoardView"
 	add_child(_board_view)
 	move_child(_board_view, _player_replica_container.get_index())
+	_connect_board_view_signals()
 
 func _connect_match_session_signals() -> void:
+	if _match_session_service == null:
+		return
+
 	if not _match_session_service.joined_match.is_connected(_on_joined_match):
 		_match_session_service.joined_match.connect(_on_joined_match)
+
+	if not _match_session_service.join_snapshot_stream_started.is_connected(_on_join_snapshot_stream_started):
+		_match_session_service.join_snapshot_stream_started.connect(_on_join_snapshot_stream_started)
+
+	if not _match_session_service.join_snapshot_stream_progressed.is_connected(_on_join_snapshot_stream_progressed):
+		_match_session_service.join_snapshot_stream_progressed.connect(_on_join_snapshot_stream_progressed)
+
+	if not _match_session_service.join_snapshot_stream_completed.is_connected(_on_join_snapshot_stream_completed):
+		_match_session_service.join_snapshot_stream_completed.connect(_on_join_snapshot_stream_completed)
 
 	if not _match_session_service.player_spawned.is_connected(_on_player_spawned):
 		_match_session_service.player_spawned.connect(_on_player_spawned)
@@ -241,6 +262,125 @@ func _connect_match_session_signals() -> void:
 
 	if not _match_session_service.board_delta_replicated.is_connected(_on_board_delta_replicated):
 		_match_session_service.board_delta_replicated.connect(_on_board_delta_replicated)
+
+func _configure_loading_progress_overlay() -> void:
+	if not RuntimeConfig.get_bool("loading_progress_ui", "enabled", true):
+		return
+
+	if _loading_progress_overlay != null:
+		return
+
+	_loading_progress_overlay = LoadingProgressOverlayScript.new()
+	if _loading_progress_overlay == null:
+		LogService.warn("BOOT", "Loading progress overlay could not be instantiated.")
+		return
+
+	add_child(_loading_progress_overlay)
+
+
+func _connect_board_view_signals() -> void:
+	if _board_view == null:
+		return
+
+	if not _board_view.board_visual_build_started.is_connected(_on_board_visual_build_started):
+		_board_view.board_visual_build_started.connect(_on_board_visual_build_started)
+
+	if not _board_view.board_visual_build_progress.is_connected(_on_board_visual_build_progress):
+		_board_view.board_visual_build_progress.connect(_on_board_visual_build_progress)
+
+	if not _board_view.board_visual_build_completed.is_connected(_on_board_visual_build_completed):
+		_board_view.board_visual_build_completed.connect(_on_board_visual_build_completed)
+
+
+func _on_join_snapshot_stream_started(progress_payload: Dictionary) -> void:
+	var expected_tile_count: int = int(progress_payload.get("expected_tile_count", 0))
+	var expected_chunk_count: int = int(progress_payload.get("expected_chunk_count", 0))
+
+	_show_loading_progress(
+		"Receiving board snapshot",
+		"Waiting for %s tile snapshot(s) across %s network chunk(s)." % [
+			expected_tile_count,
+			expected_chunk_count
+		],
+		0,
+		max(expected_chunk_count, 1)
+	)
+
+
+func _on_join_snapshot_stream_progressed(progress_payload: Dictionary) -> void:
+	var received_chunk_count: int = int(progress_payload.get("received_chunk_count", 0))
+	var expected_chunk_count: int = int(progress_payload.get("expected_chunk_count", 0))
+	var received_tile_count: int = int(progress_payload.get("received_tile_count", 0))
+	var expected_tile_count: int = int(progress_payload.get("expected_tile_count", 0))
+
+	_show_loading_progress(
+		"Receiving board snapshot",
+		"%s / %s tile snapshot(s) received." % [
+			received_tile_count,
+			expected_tile_count
+		],
+		received_chunk_count,
+		expected_chunk_count
+	)
+
+
+func _on_join_snapshot_stream_completed(progress_payload: Dictionary) -> void:
+	var received_tile_count: int = int(progress_payload.get("received_tile_count", 0))
+
+	_show_loading_indeterminate(
+		"Preparing board",
+		"Received %s tile snapshot(s). Preparing world visuals." % received_tile_count
+	)
+
+
+func _on_board_visual_build_started(total_tile_count: int) -> void:
+	_show_loading_progress(
+		"Building board visuals",
+		"Preparing tile visuals before interaction is enabled.",
+		0,
+		total_tile_count
+	)
+
+
+func _on_board_visual_build_progress(processed_tile_count: int, total_tile_count: int) -> void:
+	_show_loading_progress(
+		"Building board visuals",
+		"Preparing tile visuals before interaction is enabled.",
+		processed_tile_count,
+		total_tile_count
+	)
+
+
+func _on_board_visual_build_completed(total_tile_count: int) -> void:
+	_show_loading_progress(
+		"Board ready",
+		"Prepared %s tile visual(s)." % total_tile_count,
+		total_tile_count,
+		total_tile_count
+	)
+
+	_hide_loading_progress()
+
+
+func _show_loading_indeterminate(title_text: String, detail_text: String) -> void:
+	if _loading_progress_overlay == null:
+		return
+
+	_loading_progress_overlay.show_indeterminate(title_text, detail_text)
+
+
+func _show_loading_progress(title_text: String, detail_text: String, current_value: int, max_value: int) -> void:
+	if _loading_progress_overlay == null:
+		return
+
+	_loading_progress_overlay.show_progress(title_text, detail_text, current_value, max_value)
+
+
+func _hide_loading_progress() -> void:
+	if _loading_progress_overlay == null:
+		return
+
+	_loading_progress_overlay.hide_overlay()
 		
 func _on_joined_match(snapshot_payload: Dictionary) -> void:
 	_local_peer_id = int(snapshot_payload.get("accepted_peer_id", 0))
@@ -301,16 +441,26 @@ func _apply_board_snapshot_to_world(board_snapshot: Dictionary) -> void:
 	if _board_view == null:
 		return
 
+	var board_summary: Dictionary = board_snapshot.get("summary", {})
+	var tile_count: int = int(board_summary.get("tile_count", 0))
+
+	if tile_count > 0:
+		_show_loading_indeterminate(
+			"Applying board snapshot",
+			"Preparing %s tile snapshot(s)." % tile_count
+		)
+
 	_board_view.apply_board_snapshot(board_snapshot)
 
 	var board_world_size: Vector2 = _board_view.get_board_world_size()
 	if board_world_size == Vector2.ZERO:
+		if _board_view.is_board_ready_for_interaction():
+			_hide_loading_progress()
 		return
 
 	var ground_margin: float = max(RuntimeConfig.get_float("board_view", "ground_margin", 8.0), 0.0)
 	_configure_ground(board_world_size + Vector2(ground_margin, ground_margin))
 
-	var board_summary: Dictionary = board_snapshot.get("summary", {})
 	LogService.info(
 		"WORLD",
 		"Applied board snapshot: %sx%s tiles across %s chunk(s)." % [
@@ -319,6 +469,9 @@ func _apply_board_snapshot_to_world(board_snapshot: Dictionary) -> void:
 			int(board_summary.get("chunk_count", 0))
 		]
 	)
+
+	if _board_view.is_board_ready_for_interaction():
+		_hide_loading_progress()
 
 func _upsert_player_avatar_from_snapshot(player_snapshot: Dictionary, snap_immediately: bool) -> void:
 	var peer_id: int = int(player_snapshot.get("peer_id", 0))
@@ -347,6 +500,28 @@ func _clear_all_player_avatars() -> void:
 		avatar_node.queue_free()
 	_player_avatar_by_peer_id.clear()
 
+func _update_board_detail_focus() -> void:
+	if _board_view == null:
+		return
+	if not _board_view.is_board_ready_for_interaction():
+		return
+
+	var local_avatar_node: Node3D = _get_local_player_avatar() as Node3D
+	if local_avatar_node == null:
+		return
+
+	var hovered_tile_index: int = -1
+
+	var viewport: Viewport = get_viewport()
+	if viewport != null:
+		var mouse_position: Vector2 = viewport.get_mouse_position()
+		var hit_position_variant: Variant = _intersect_mouse_with_board_plane(mouse_position)
+		if hit_position_variant != null:
+			var hit_position: Vector3 = hit_position_variant
+			hovered_tile_index = _board_view.get_tile_index_from_world_position(hit_position)
+
+	_board_view.set_detail_focus_world_position(local_avatar_node.global_position, hovered_tile_index)
+
 func _intersect_mouse_with_board_plane(screen_position: Vector2) -> Variant:
 	var ray_origin: Vector3 = _camera.project_ray_origin(screen_position)
 	var ray_direction: Vector3 = _camera.project_ray_normal(screen_position)
@@ -358,6 +533,12 @@ func _update_local_player_movement(delta: float) -> void:
 		return
 
 	if _local_peer_id <= 0:
+		return
+
+	if _board_view == null:
+		return
+	if not _board_view.is_board_ready_for_interaction():
+		_local_move_request_accumulator_sec = 0.0
 		return
 
 	var avatar_node = _get_local_player_avatar()

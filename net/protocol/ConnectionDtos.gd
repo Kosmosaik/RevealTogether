@@ -1,6 +1,9 @@
 extends RefCounted
 class_name ConnectionDtos
 
+const JOIN_BOARD_SNAPSHOT_FORMAT_LEGACY: String = "legacy"
+const JOIN_BOARD_SNAPSHOT_FORMAT_COMPACT_V1: String = "compact_v1"
+
 static func build_hello_payload(player_display_name: String) -> Dictionary:
 	return {
 		"protocol_version": NetProtocol.PROTOCOL_VERSION,
@@ -87,13 +90,27 @@ static func build_join_reject_payload(match_id: String, reject_reason: StringNam
 		"message": message
 	}
 
-static func build_join_snapshot_payload(match_state: MatchState, accepted_peer_id: int) -> Dictionary:
+static func build_join_snapshot_payload(
+	match_state: MatchState,
+	accepted_peer_id: int,
+	include_board_tiles: bool = true
+) -> Dictionary:
 	var board_summary: Dictionary = {}
 	var board_snapshot: Dictionary = {}
+	var board_snapshot_stream_expected: bool = false
 
 	if match_state.board_state != null:
 		board_summary = match_state.board_state.to_summary_dto()
-		board_snapshot = match_state.board_state.to_snapshot_dto()
+
+		if include_board_tiles:
+			board_snapshot = match_state.board_state.to_snapshot_dto()
+		else:
+			board_snapshot_stream_expected = true
+			board_snapshot = {
+				"summary": board_summary,
+				"tiles": [],
+				"is_streamed": true
+			}
 
 	return {
 		"match_id": match_state.match_id,
@@ -103,7 +120,59 @@ static func build_join_snapshot_payload(match_state: MatchState, accepted_peer_i
 		"server_time_unix_ms": int(Time.get_unix_time_from_system() * 1000),
 		"players": match_state.build_player_snapshot_list(),
 		"board_summary": board_summary,
-		"board_snapshot": board_snapshot
+		"board_snapshot": board_snapshot,
+		"board_snapshot_stream_expected": board_snapshot_stream_expected
+	}
+	
+static func build_join_board_snapshot_chunk_payload(
+	match_state: MatchState,
+	snapshot_chunk_index: int,
+	snapshot_chunk_count: int,
+	tile_snapshot_list: Array
+) -> Dictionary:
+	return {
+		"match_id": match_state.match_id,
+		"server_time_unix_ms": int(Time.get_unix_time_from_system() * 1000),
+		"snapshot_format": JOIN_BOARD_SNAPSHOT_FORMAT_LEGACY,
+		"snapshot_chunk_index": snapshot_chunk_index,
+		"snapshot_chunk_count": snapshot_chunk_count,
+		"tiles": tile_snapshot_list
+	}
+
+
+static func build_join_board_snapshot_compact_chunk_payload(
+	match_state: MatchState,
+	snapshot_chunk_index: int,
+	snapshot_chunk_count: int,
+	first_tile_index: int,
+	tile_count: int,
+	compact_tile_batch: Dictionary
+) -> Dictionary:
+	return {
+		"match_id": match_state.match_id,
+		"server_time_unix_ms": int(Time.get_unix_time_from_system() * 1000),
+		"snapshot_format": JOIN_BOARD_SNAPSHOT_FORMAT_COMPACT_V1,
+		"snapshot_chunk_index": snapshot_chunk_index,
+		"snapshot_chunk_count": snapshot_chunk_count,
+		"first_tile_index": first_tile_index,
+		"tile_count": tile_count,
+		"compact_tiles": compact_tile_batch
+	}
+
+static func build_join_board_snapshot_complete_payload(
+	match_state: MatchState,
+	snapshot_chunk_count: int
+) -> Dictionary:
+	var board_summary: Dictionary = {}
+
+	if match_state.board_state != null:
+		board_summary = match_state.board_state.to_summary_dto()
+
+	return {
+		"match_id": match_state.match_id,
+		"server_time_unix_ms": int(Time.get_unix_time_from_system() * 1000),
+		"snapshot_chunk_count": snapshot_chunk_count,
+		"board_summary": board_summary
 	}
 
 static func build_player_spawn_payload(match_state: MatchState, player_state: MatchPlayerState) -> Dictionary:

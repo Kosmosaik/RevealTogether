@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c8jpp0eqaay7d"
-path="res://.godot/imported/64_64_steve.png-65085cc844451662850ac4ac7ba23adb.ctex"
+uid="uid://ceb7bk1shnju"
+path="res://.godot/imported/144_256_tibetian.png-35092b08ffb7edbbbcd8b6c311f76702.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://64_64_steve.png"
-dest_files=["res://.godot/imported/64_64_steve.png-65085cc844451662850ac4ac7ba23adb.ctex"]
+source_file="res://assets/reveal_images/144_256_tibetian.png"
+dest_files=["res://.godot/imported/144_256_tibetian.png-35092b08ffb7edbbbcd8b6c311f76702.ctex"]
 
 [params]
 

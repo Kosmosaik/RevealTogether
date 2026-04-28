@@ -8,6 +8,9 @@ signal player_spawned(player_payload: Dictionary)
 signal player_despawned(player_payload: Dictionary)
 signal player_transforms_replicated(replication_payload: Dictionary)
 signal board_delta_replicated(replication_payload: Dictionary)
+signal join_snapshot_stream_started(progress_payload: Dictionary)
+signal join_snapshot_stream_progressed(progress_payload: Dictionary)
+signal join_snapshot_stream_completed(progress_payload: Dictionary)
 
 var _service_mode: StringName = &"none"
 var _network_peer: ENetMultiplayerPeer = null
@@ -19,6 +22,12 @@ var _local_joined_match_id: String = ""
 var _server_spawn_slot_by_peer_id: Dictionary = {}
 var _server_replication_accumulator_sec: float = 0.0
 var _server_reveal_tick_accumulator_sec: float = 0.0
+
+var _pending_join_snapshot_payload: Dictionary = {}
+var _pending_join_board_tile_snapshot_list: Array = []
+var _pending_join_board_snapshot_chunk_count: int = 0
+var _pending_join_board_snapshot_received_chunk_count: int = 0
+var _pending_join_board_snapshot_received_chunk_indices: Dictionary = {}
 
 func _ready() -> void:
 	# This shared RPC node must live at the same path on client and server.
@@ -190,6 +199,7 @@ func shutdown_session() -> void:
 	_server_spawn_slot_by_peer_id.clear()
 	_server_replication_accumulator_sec = 0.0
 	_server_reveal_tick_accumulator_sec = 0.0
+	_clear_pending_join_snapshot_stream()
 	set_process(false)
 
 func get_local_peer_id() -> int:
@@ -512,8 +522,7 @@ func rpc_receive_join_match_request(join_request_payload: Dictionary) -> void:
 	player_state.world_yaw_radians = MatchSpawnPlanner.build_spawn_yaw_for_slot(map_preset_def, spawn_layout_def, spawn_slot_index)
 	_match_state.add_player_state(player_state)
 
-	var join_snapshot_payload: Dictionary = ConnectionDtos.build_join_snapshot_payload(_match_state, sender_peer_id)
-	rpc_id(sender_peer_id, "rpc_receive_join_match_snapshot", join_snapshot_payload)
+	_send_join_snapshot_to_peer(sender_peer_id)
 
 	var spawn_payload: Dictionary = ConnectionDtos.build_player_spawn_payload(_match_state, player_state)
 	for approved_peer_id_variant in _handshake_approved_by_peer_id.keys():
@@ -533,10 +542,432 @@ func rpc_receive_join_match_request(join_request_payload: Dictionary) -> void:
 	)
 
 @rpc("authority", "call_remote", "reliable", NetProtocol.HANDSHAKE_CHANNEL)
+
 func rpc_receive_join_match_snapshot(snapshot_payload: Dictionary) -> void:
 	if multiplayer.is_server():
 		return
 
+	var board_snapshot_stream_expected: bool = bool(snapshot_payload.get("board_snapshot_stream_expected", false))
+	if board_snapshot_stream_expected:
+		_clear_pending_join_snapshot_stream()
+		_pending_join_snapshot_payload = snapshot_payload.duplicate(true)
+
+		var board_summary: Dictionary = _get_pending_join_board_summary()
+		var expected_tile_count: int = int(board_summary.get("tile_count", 0))
+		var expected_chunk_count: int = int(board_summary.get("stream_snapshot_chunk_count", 0))
+
+		join_snapshot_stream_started.emit({
+			"match_id": str(snapshot_payload.get("match_id", "")),
+			"received_chunk_count": 0,
+			"expected_chunk_count": expected_chunk_count,
+			"received_tile_count": 0,
+			"expected_tile_count": expected_tile_count
+		})
+
+		LogService.info(
+			"NET",
+			"Received streamed join snapshot header for match '%s'. Waiting for board snapshot chunks." % str(snapshot_payload.get("match_id", ""))
+		)
+		return
+
+	_accept_join_match_snapshot(snapshot_payload)
+
+@rpc("authority", "call_remote", "reliable", NetProtocol.HANDSHAKE_CHANNEL)
+
+func rpc_receive_join_board_snapshot_chunk(chunk_payload: Dictionary) -> void:
+	if multiplayer.is_server():
+		return
+
+	if _pending_join_snapshot_payload.is_empty():
+		LogService.warn("NET", "Received board snapshot chunk without a pending streamed join snapshot.")
+		return
+
+	var pending_match_id: String = str(_pending_join_snapshot_payload.get("match_id", ""))
+	var chunk_match_id: String = str(chunk_payload.get("match_id", ""))
+	if chunk_match_id != pending_match_id:
+		LogService.warn(
+			"NET",
+			"Ignored board snapshot chunk for match '%s' while waiting for match '%s'." % [
+				chunk_match_id,
+				pending_match_id
+			]
+		)
+		return
+
+	var snapshot_chunk_index: int = int(chunk_payload.get("snapshot_chunk_index", -1))
+	var snapshot_chunk_count: int = int(chunk_payload.get("snapshot_chunk_count", 0))
+	if snapshot_chunk_index < 0:
+		LogService.warn("NET", "Received board snapshot chunk with an invalid chunk index.")
+		return
+	if snapshot_chunk_count <= 0:
+		LogService.warn("NET", "Received board snapshot chunk with an invalid chunk count.")
+		return
+
+	if _pending_join_board_snapshot_chunk_count == 0:
+		_pending_join_board_snapshot_chunk_count = snapshot_chunk_count
+	elif _pending_join_board_snapshot_chunk_count != snapshot_chunk_count:
+		LogService.warn("NET", "Received board snapshot chunk with mismatched chunk count.")
+		return
+
+	if _pending_join_board_snapshot_received_chunk_indices.has(snapshot_chunk_index):
+		return
+
+	var tile_snapshot_list: Array[Dictionary] = _build_tile_snapshot_list_from_join_board_snapshot_chunk(chunk_payload)
+	var expected_tile_count: int = int(chunk_payload.get("tile_count", tile_snapshot_list.size()))
+	if tile_snapshot_list.is_empty() and expected_tile_count > 0:
+		LogService.warn(
+			"NET",
+			"Received board snapshot chunk %s, but no tile snapshots could be decoded." % snapshot_chunk_index
+		)
+		return
+
+	for tile_snapshot in tile_snapshot_list:
+		if tile_snapshot.is_empty():
+			continue
+
+		_pending_join_board_tile_snapshot_list.append(tile_snapshot)
+
+	_pending_join_board_snapshot_received_chunk_indices[snapshot_chunk_index] = true
+	_pending_join_board_snapshot_received_chunk_count += 1
+
+	_emit_pending_join_snapshot_stream_progress()
+
+func _emit_pending_join_snapshot_stream_progress() -> void:
+	if _pending_join_snapshot_payload.is_empty():
+		return
+
+	var board_summary: Dictionary = _get_pending_join_board_summary()
+	var expected_tile_count: int = int(board_summary.get("tile_count", 0))
+	if expected_tile_count <= 0:
+		expected_tile_count = _pending_join_board_tile_snapshot_list.size()
+
+	join_snapshot_stream_progressed.emit({
+		"match_id": str(_pending_join_snapshot_payload.get("match_id", "")),
+		"received_chunk_count": _pending_join_board_snapshot_received_chunk_count,
+		"expected_chunk_count": _pending_join_board_snapshot_chunk_count,
+		"received_tile_count": _pending_join_board_tile_snapshot_list.size(),
+		"expected_tile_count": expected_tile_count
+	})
+
+func _build_tile_snapshot_list_from_join_board_snapshot_chunk(chunk_payload: Dictionary) -> Array[Dictionary]:
+	var snapshot_format: String = str(chunk_payload.get(
+		"snapshot_format",
+		ConnectionDtos.JOIN_BOARD_SNAPSHOT_FORMAT_LEGACY
+	))
+
+	if snapshot_format == ConnectionDtos.JOIN_BOARD_SNAPSHOT_FORMAT_COMPACT_V1:
+		return _expand_compact_join_board_snapshot_chunk(chunk_payload)
+
+	var raw_tile_snapshot_list: Array = chunk_payload.get("tiles", [])
+	var tile_snapshot_list: Array[Dictionary] = []
+
+	for tile_snapshot_variant in raw_tile_snapshot_list:
+		if not (tile_snapshot_variant is Dictionary):
+			continue
+
+		var tile_snapshot: Dictionary = tile_snapshot_variant
+		if tile_snapshot.is_empty():
+			continue
+
+		tile_snapshot_list.append(tile_snapshot)
+
+	return tile_snapshot_list
+
+
+func _expand_compact_join_board_snapshot_chunk(chunk_payload: Dictionary) -> Array[Dictionary]:
+	var board_summary: Dictionary = _get_pending_join_board_summary()
+	if board_summary.is_empty():
+		LogService.warn("NET", "Cannot expand compact board snapshot chunk without a pending board summary.")
+		return []
+
+	var board_width: int = int(board_summary.get("board_width", 0))
+	var board_height: int = int(board_summary.get("board_height", 0))
+	if board_width <= 0 or board_height <= 0:
+		LogService.warn("NET", "Cannot expand compact board snapshot chunk with invalid board dimensions.")
+		return []
+
+	var chunk_width: int = max(int(board_summary.get("chunk_width", 1)), 1)
+	var chunk_height: int = max(int(board_summary.get("chunk_height", 1)), 1)
+	var chunk_columns: int = max(int(board_summary.get("chunk_columns", 1)), 1)
+	var total_tile_count: int = board_width * board_height
+
+	var compact_tiles: Dictionary = chunk_payload.get("compact_tiles", {})
+	if compact_tiles.is_empty():
+		return []
+
+	var first_tile_index: int = int(chunk_payload.get("first_tile_index", 0))
+	var tile_count: int = int(chunk_payload.get("tile_count", 0))
+	if first_tile_index < 0 or tile_count <= 0:
+		return []
+
+	var variant_palette: Array = compact_tiles.get("variant_palette", [])
+	var variant_palette_indices: Variant = compact_tiles.get("variant_palette_indices", PackedInt32Array())
+	var state_flags_values: Variant = compact_tiles.get("state_flags", PackedInt32Array())
+	var max_hp_values: Variant = compact_tiles.get("max_hp_values", PackedInt32Array())
+	var current_hp_values: Variant = compact_tiles.get("current_hp_values", PackedInt32Array())
+	var unlocked_flags: Variant = compact_tiles.get("unlocked_flags", PackedByteArray())
+	var cleared_flags: Variant = compact_tiles.get("cleared_flags", PackedByteArray())
+
+	var claimed_tile_states: Array = compact_tiles.get("claimed_tile_states", [])
+	var last_damage_tile_states: Array = compact_tiles.get("last_damage_tile_states", [])
+	var rare_signal_tile_states: Array = compact_tiles.get("rare_signal_tile_states", [])
+
+	var claim_state_by_relative_index: Dictionary = _build_relative_compact_state_map(claimed_tile_states, 3)
+	var last_damage_state_by_relative_index: Dictionary = _build_relative_compact_state_map(last_damage_tile_states, 2)
+	var rare_signal_state_by_relative_index: Dictionary = _build_relative_compact_state_map(rare_signal_tile_states, 2)
+	var variant_metadata_by_id: Dictionary = _build_compact_snapshot_variant_metadata_by_id(variant_palette)
+
+	var tile_snapshot_list: Array[Dictionary] = []
+
+	for relative_tile_index in range(tile_count):
+		var tile_index: int = first_tile_index + relative_tile_index
+		if tile_index < 0 or tile_index >= total_tile_count:
+			continue
+
+		var grid_x: int = tile_index % board_width
+		var grid_y: int = tile_index / board_width
+		var chunk_x: int = grid_x / chunk_width
+		var chunk_y: int = grid_y / chunk_height
+		var chunk_index: int = (chunk_y * chunk_columns) + chunk_x
+
+		var variant_palette_index: int = _get_indexed_int_value(variant_palette_indices, relative_tile_index, -1)
+		var variant_id_text: String = ""
+		if variant_palette_index >= 0 and variant_palette_index < variant_palette.size():
+			variant_id_text = str(variant_palette[variant_palette_index])
+
+		var family_id_text: String = ""
+		var behavior_id_text: String = ""
+		if variant_metadata_by_id.has(variant_id_text):
+			var variant_metadata: Dictionary = variant_metadata_by_id[variant_id_text]
+			family_id_text = str(variant_metadata.get("family_id", ""))
+			behavior_id_text = str(variant_metadata.get("behavior_id", ""))
+
+		var claim_owner_peer_id: int = 0
+		var claim_expires_at_ms: int = 0
+		if claim_state_by_relative_index.has(relative_tile_index):
+			var claim_state: Array = claim_state_by_relative_index[relative_tile_index]
+			claim_owner_peer_id = int(claim_state[1])
+			claim_expires_at_ms = int(claim_state[2])
+
+		var last_damage_at_ms: int = 0
+		if last_damage_state_by_relative_index.has(relative_tile_index):
+			var last_damage_state: Array = last_damage_state_by_relative_index[relative_tile_index]
+			last_damage_at_ms = int(last_damage_state[1])
+
+		var rare_signal_state: int = 0
+		if rare_signal_state_by_relative_index.has(relative_tile_index):
+			var rare_signal_state_entry: Array = rare_signal_state_by_relative_index[relative_tile_index]
+			rare_signal_state = int(rare_signal_state_entry[1])
+
+		var uv_rect: Rect2 = _build_compact_snapshot_uv_rect(board_width, board_height, grid_x, grid_y)
+
+		var tile_snapshot: Dictionary = {
+			"tile_index": tile_index,
+			"tile_id": tile_index,
+			"grid_x": grid_x,
+			"grid_y": grid_y,
+			"chunk_index": chunk_index,
+			"family_id": family_id_text,
+			"variant_id": variant_id_text,
+			"behavior_id": behavior_id_text,
+			"state_flags": _get_indexed_int_value(state_flags_values, relative_tile_index, 0),
+			"max_hp": _get_indexed_int_value(max_hp_values, relative_tile_index, 0),
+			"current_hp": _get_indexed_int_value(current_hp_values, relative_tile_index, 0),
+			"is_unlocked": _get_indexed_bool_value(unlocked_flags, relative_tile_index, false),
+			"is_cleared": _get_indexed_bool_value(cleared_flags, relative_tile_index, false),
+			"claim_owner_peer_id": claim_owner_peer_id,
+			"claim_expires_at_ms": claim_expires_at_ms,
+			"last_damage_at_ms": last_damage_at_ms,
+			"rare_signal_state": rare_signal_state,
+			"uv_rect": uv_rect
+		}
+
+		tile_snapshot_list.append(tile_snapshot)
+
+	return tile_snapshot_list
+
+
+func _get_pending_join_board_summary() -> Dictionary:
+	var board_summary: Dictionary = _pending_join_snapshot_payload.get("board_summary", {})
+	if not board_summary.is_empty():
+		return board_summary
+
+	var board_snapshot: Dictionary = _pending_join_snapshot_payload.get("board_snapshot", {})
+	return board_snapshot.get("summary", {})
+
+
+func _build_relative_compact_state_map(state_list: Array, expected_entry_size: int) -> Dictionary:
+	var state_by_relative_index: Dictionary = {}
+
+	for state_variant in state_list:
+		if not (state_variant is Array):
+			continue
+
+		var state_entry: Array = state_variant
+		if state_entry.size() < expected_entry_size:
+			continue
+
+		var relative_tile_index: int = int(state_entry[0])
+		if relative_tile_index < 0:
+			continue
+
+		state_by_relative_index[relative_tile_index] = state_entry
+
+	return state_by_relative_index
+
+
+func _build_compact_snapshot_variant_metadata_by_id(variant_palette: Array) -> Dictionary:
+	var metadata_by_variant_id: Dictionary = {}
+	var variant_def_by_id: Dictionary = BoardTileContentCatalog.build_variant_by_id()
+
+	for variant_id_variant in variant_palette:
+		var variant_id_text: String = str(variant_id_variant)
+		var family_id_text: String = ""
+		var behavior_id_text: String = ""
+
+		var variant_id: StringName = StringName(variant_id_text)
+		if variant_def_by_id.has(variant_id):
+			var tile_variant_def: TileVariantDef = variant_def_by_id[variant_id] as TileVariantDef
+			if tile_variant_def != null:
+				family_id_text = String(tile_variant_def.family_id)
+				behavior_id_text = String(tile_variant_def.behavior_id)
+
+		metadata_by_variant_id[variant_id_text] = {
+			"family_id": family_id_text,
+			"behavior_id": behavior_id_text
+		}
+
+	return metadata_by_variant_id
+
+
+func _build_compact_snapshot_uv_rect(board_width: int, board_height: int, grid_x: int, grid_y: int) -> Rect2:
+	if board_width <= 0 or board_height <= 0:
+		return Rect2()
+
+	var uv_width: float = 1.0 / float(board_width)
+	var uv_height: float = 1.0 / float(board_height)
+
+	return Rect2(
+		float(grid_x) * uv_width,
+		float(grid_y) * uv_height,
+		uv_width,
+		uv_height
+	)
+
+
+func _get_indexed_int_value(indexed_values: Variant, value_index: int, default_value: int) -> int:
+	if value_index < 0:
+		return default_value
+
+	if indexed_values is PackedInt32Array:
+		var packed_int32_values: PackedInt32Array = indexed_values
+		if value_index >= packed_int32_values.size():
+			return default_value
+		return int(packed_int32_values[value_index])
+
+	if indexed_values is PackedByteArray:
+		var packed_byte_values: PackedByteArray = indexed_values
+		if value_index >= packed_byte_values.size():
+			return default_value
+		return int(packed_byte_values[value_index])
+
+	if indexed_values is Array:
+		var array_values: Array = indexed_values
+		if value_index >= array_values.size():
+			return default_value
+		return int(array_values[value_index])
+
+	return default_value
+
+
+func _get_indexed_bool_value(indexed_values: Variant, value_index: int, default_value: bool) -> bool:
+	var default_int_value: int = 0
+	if default_value:
+		default_int_value = 1
+
+	return _get_indexed_int_value(indexed_values, value_index, default_int_value) != 0
+
+@rpc("authority", "call_remote", "reliable", NetProtocol.HANDSHAKE_CHANNEL)
+func rpc_receive_join_board_snapshot_complete(complete_payload: Dictionary) -> void:
+	if multiplayer.is_server():
+		return
+
+	if _pending_join_snapshot_payload.is_empty():
+		LogService.warn("NET", "Received board snapshot stream completion without a pending streamed join snapshot.")
+		return
+
+	var pending_match_id: String = str(_pending_join_snapshot_payload.get("match_id", ""))
+	var complete_match_id: String = str(complete_payload.get("match_id", ""))
+	if complete_match_id != pending_match_id:
+		LogService.warn(
+			"NET",
+			"Ignored board snapshot stream completion for match '%s' while waiting for match '%s'." % [
+				complete_match_id,
+				pending_match_id
+			]
+		)
+		return
+
+	var expected_chunk_count: int = int(complete_payload.get("snapshot_chunk_count", 0))
+	if expected_chunk_count <= 0:
+		LogService.warn("NET", "Received board snapshot stream completion with invalid chunk count.")
+		return
+
+	if _pending_join_board_snapshot_chunk_count != expected_chunk_count:
+		LogService.warn(
+			"NET",
+			"Board snapshot stream completion expected %s chunk(s), but client expected %s." % [
+				expected_chunk_count,
+				_pending_join_board_snapshot_chunk_count
+			]
+		)
+		return
+
+	if _pending_join_board_snapshot_received_chunk_count != expected_chunk_count:
+		LogService.warn(
+			"NET",
+			"Board snapshot stream incomplete. Received %s of %s chunk(s)." % [
+				_pending_join_board_snapshot_received_chunk_count,
+				expected_chunk_count
+			]
+		)
+		return
+
+	var completed_snapshot_payload: Dictionary = _pending_join_snapshot_payload.duplicate(true)
+	var board_snapshot: Dictionary = completed_snapshot_payload.get("board_snapshot", {}).duplicate(true)
+	var board_summary: Dictionary = complete_payload.get("board_summary", {})
+
+	if not board_summary.is_empty():
+		board_snapshot["summary"] = board_summary
+
+	board_snapshot["tiles"] = _pending_join_board_tile_snapshot_list.duplicate(true)
+	board_snapshot.erase("is_streamed")
+
+	completed_snapshot_payload["board_snapshot"] = board_snapshot
+	completed_snapshot_payload["board_snapshot_stream_expected"] = false
+
+	var expected_tile_count: int = int(board_summary.get("tile_count", _pending_join_board_tile_snapshot_list.size()))
+	join_snapshot_stream_completed.emit({
+		"match_id": pending_match_id,
+		"received_chunk_count": expected_chunk_count,
+		"expected_chunk_count": expected_chunk_count,
+		"received_tile_count": _pending_join_board_tile_snapshot_list.size(),
+		"expected_tile_count": expected_tile_count
+	})
+
+	LogService.info(
+		"NET",
+		"Completed streamed board snapshot for match '%s' with %s tile snapshot(s) across %s chunk(s)." % [
+			pending_match_id,
+			_pending_join_board_tile_snapshot_list.size(),
+			expected_chunk_count
+		]
+	)
+
+	_clear_pending_join_snapshot_stream()
+	_accept_join_match_snapshot(completed_snapshot_payload)
+
+func _accept_join_match_snapshot(snapshot_payload: Dictionary) -> void:
 	_local_joined_match_id = str(snapshot_payload.get("match_id", ""))
 	_local_peer_id = int(snapshot_payload.get("accepted_peer_id", _local_peer_id))
 	_local_player_snapshot_by_peer_id.clear()
@@ -566,6 +997,14 @@ func rpc_receive_join_match_snapshot(snapshot_payload: Dictionary) -> void:
 	)
 
 	joined_match.emit(snapshot_payload)
+
+
+func _clear_pending_join_snapshot_stream() -> void:
+	_pending_join_snapshot_payload.clear()
+	_pending_join_board_tile_snapshot_list.clear()
+	_pending_join_board_snapshot_chunk_count = 0
+	_pending_join_board_snapshot_received_chunk_count = 0
+	_pending_join_board_snapshot_received_chunk_indices.clear()
 
 @rpc("authority", "call_remote", "reliable", NetProtocol.HANDSHAKE_CHANNEL)
 func rpc_receive_join_match_reject(reject_payload: Dictionary) -> void:
@@ -966,6 +1405,250 @@ func _broadcast_player_transform_replication_to_connected_clients() -> void:
 		if not _match_state.has_player_state(approved_peer_id):
 			continue
 		rpc_id(approved_peer_id, "rpc_receive_player_transform_replication", replication_payload)
+
+func _send_join_snapshot_to_peer(peer_id: int) -> void:
+	if _match_state == null:
+		return
+
+	if _match_state.board_state == null:
+		return
+
+	var stream_join_board_snapshot: bool = _should_stream_join_board_snapshot()
+	var join_snapshot_payload: Dictionary = ConnectionDtos.build_join_snapshot_payload(
+		_match_state,
+		peer_id,
+		not stream_join_board_snapshot
+	)
+
+	rpc_id(peer_id, "rpc_receive_join_match_snapshot", join_snapshot_payload)
+
+	if stream_join_board_snapshot:
+		_send_join_board_snapshot_stream_to_peer(peer_id)
+
+
+func _should_stream_join_board_snapshot() -> bool:
+	if _match_state == null:
+		return false
+
+	if _match_state.board_state == null:
+		return false
+
+	var stream_tile_threshold: int = max(
+		RuntimeConfig.get_int("replication", "join_snapshot_stream_tile_threshold", 32768),
+		1
+	)
+
+	return _match_state.board_state.tiles.size() >= stream_tile_threshold
+
+
+func _get_join_snapshot_stream_batch_size() -> int:
+	return max(
+		RuntimeConfig.get_int("replication", "join_snapshot_stream_batch_size", 2048),
+		1
+	)
+
+
+func _send_join_board_snapshot_stream_to_peer(peer_id: int) -> void:
+	if RuntimeConfig.get_bool("replication", "join_snapshot_stream_compact_enabled", true):
+		_send_compact_join_board_snapshot_stream_to_peer(peer_id)
+		return
+
+	_send_legacy_join_board_snapshot_stream_to_peer(peer_id)
+
+
+func _send_legacy_join_board_snapshot_stream_to_peer(peer_id: int) -> void:
+	if _match_state == null:
+		return
+
+	if _match_state.board_state == null:
+		return
+
+	var tile_snapshot_list: Array = _match_state.board_state.build_tile_snapshot_list()
+	var batch_size: int = _get_join_snapshot_stream_batch_size()
+	var snapshot_chunk_count: int = int(ceil(float(tile_snapshot_list.size()) / float(batch_size)))
+
+	for snapshot_chunk_index in range(snapshot_chunk_count):
+		var start_index: int = snapshot_chunk_index * batch_size
+		var end_index: int = min(start_index + batch_size, tile_snapshot_list.size())
+		var tile_snapshot_batch: Array = tile_snapshot_list.slice(start_index, end_index)
+
+		var chunk_payload: Dictionary = ConnectionDtos.build_join_board_snapshot_chunk_payload(
+			_match_state,
+			snapshot_chunk_index,
+			snapshot_chunk_count,
+			tile_snapshot_batch
+		)
+
+		rpc_id(peer_id, "rpc_receive_join_board_snapshot_chunk", chunk_payload)
+
+	var complete_payload: Dictionary = ConnectionDtos.build_join_board_snapshot_complete_payload(
+		_match_state,
+		snapshot_chunk_count
+	)
+
+	rpc_id(peer_id, "rpc_receive_join_board_snapshot_complete", complete_payload)
+
+	LogService.info(
+		"NET",
+		"Sent legacy streamed board snapshot to peer %s with %s tile snapshot(s) across %s chunk(s)." % [
+			peer_id,
+			tile_snapshot_list.size(),
+			snapshot_chunk_count
+		]
+	)
+
+
+func _send_compact_join_board_snapshot_stream_to_peer(peer_id: int) -> void:
+	if _match_state == null:
+		return
+
+	if _match_state.board_state == null:
+		return
+
+	var board_state: BoardState = _match_state.board_state
+	var total_tile_count: int = board_state.tiles.size()
+	if total_tile_count <= 0:
+		return
+
+	var batch_size: int = _get_join_snapshot_stream_batch_size()
+	var snapshot_chunk_count: int = int(ceil(float(total_tile_count) / float(batch_size)))
+
+	for snapshot_chunk_index in range(snapshot_chunk_count):
+		var first_tile_index: int = snapshot_chunk_index * batch_size
+		var exclusive_end_tile_index: int = min(first_tile_index + batch_size, total_tile_count)
+		var tile_count: int = exclusive_end_tile_index - first_tile_index
+
+		var compact_tile_batch: Dictionary = _build_compact_join_board_snapshot_batch(
+			board_state,
+			first_tile_index,
+			exclusive_end_tile_index
+		)
+
+		var chunk_payload: Dictionary = ConnectionDtos.build_join_board_snapshot_compact_chunk_payload(
+			_match_state,
+			snapshot_chunk_index,
+			snapshot_chunk_count,
+			first_tile_index,
+			tile_count,
+			compact_tile_batch
+		)
+
+		rpc_id(peer_id, "rpc_receive_join_board_snapshot_chunk", chunk_payload)
+
+	var complete_payload: Dictionary = ConnectionDtos.build_join_board_snapshot_complete_payload(
+		_match_state,
+		snapshot_chunk_count
+	)
+
+	rpc_id(peer_id, "rpc_receive_join_board_snapshot_complete", complete_payload)
+
+	LogService.info(
+		"NET",
+		"Sent compact streamed board snapshot to peer %s with %s tile snapshot(s) across %s chunk(s)." % [
+			peer_id,
+			total_tile_count,
+			snapshot_chunk_count
+		]
+	)
+
+
+func _build_compact_join_board_snapshot_batch(
+	board_state: BoardState,
+	first_tile_index: int,
+	exclusive_end_tile_index: int
+) -> Dictionary:
+	var variant_palette: Array[String] = []
+	var variant_index_by_id: Dictionary = {}
+	var variant_palette_indices: PackedInt32Array = PackedInt32Array()
+	var state_flags_values: PackedInt32Array = PackedInt32Array()
+	var max_hp_values: PackedInt32Array = PackedInt32Array()
+	var current_hp_values: PackedInt32Array = PackedInt32Array()
+	var unlocked_flags: PackedByteArray = PackedByteArray()
+	var cleared_flags: PackedByteArray = PackedByteArray()
+	var claimed_tile_states: Array = []
+	var last_damage_tile_states: Array = []
+	var rare_signal_tile_states: Array = []
+
+	for tile_index in range(first_tile_index, exclusive_end_tile_index):
+		var relative_tile_index: int = tile_index - first_tile_index
+		var tile_record: TileRecord = board_state.get_tile_by_index(tile_index)
+
+		if tile_record == null:
+			variant_palette_indices.append(_get_or_register_compact_variant_palette_index("", variant_palette, variant_index_by_id))
+			state_flags_values.append(0)
+			max_hp_values.append(0)
+			current_hp_values.append(0)
+			unlocked_flags.append(0)
+			cleared_flags.append(0)
+			continue
+
+		var variant_id_text: String = String(tile_record.variant_id)
+		var variant_palette_index: int = _get_or_register_compact_variant_palette_index(
+			variant_id_text,
+			variant_palette,
+			variant_index_by_id
+		)
+
+		variant_palette_indices.append(variant_palette_index)
+		state_flags_values.append(tile_record.state_flags)
+		max_hp_values.append(tile_record.max_hp)
+		current_hp_values.append(tile_record.current_hp)
+
+		var unlocked_flag: int = 0
+		if tile_record.is_unlocked:
+			unlocked_flag = 1
+		unlocked_flags.append(unlocked_flag)
+
+		var cleared_flag: int = 0
+		if tile_record.is_cleared:
+			cleared_flag = 1
+		cleared_flags.append(cleared_flag)
+
+		if tile_record.claim_owner_peer_id != 0 or tile_record.claim_expires_at_ms != 0:
+			claimed_tile_states.append([
+				relative_tile_index,
+				tile_record.claim_owner_peer_id,
+				tile_record.claim_expires_at_ms
+			])
+
+		if tile_record.last_damage_at_ms != 0:
+			last_damage_tile_states.append([
+				relative_tile_index,
+				tile_record.last_damage_at_ms
+			])
+
+		if tile_record.rare_signal_state != 0:
+			rare_signal_tile_states.append([
+				relative_tile_index,
+				tile_record.rare_signal_state
+			])
+
+	return {
+		"variant_palette": variant_palette,
+		"variant_palette_indices": variant_palette_indices,
+		"state_flags": state_flags_values,
+		"max_hp_values": max_hp_values,
+		"current_hp_values": current_hp_values,
+		"unlocked_flags": unlocked_flags,
+		"cleared_flags": cleared_flags,
+		"claimed_tile_states": claimed_tile_states,
+		"last_damage_tile_states": last_damage_tile_states,
+		"rare_signal_tile_states": rare_signal_tile_states
+	}
+
+
+func _get_or_register_compact_variant_palette_index(
+	variant_id_text: String,
+	variant_palette: Array[String],
+	variant_index_by_id: Dictionary
+) -> int:
+	if variant_index_by_id.has(variant_id_text):
+		return int(variant_index_by_id[variant_id_text])
+
+	var variant_palette_index: int = variant_palette.size()
+	variant_palette.append(variant_id_text)
+	variant_index_by_id[variant_id_text] = variant_palette_index
+	return variant_palette_index
 
 func _broadcast_board_delta_to_connected_clients(changed_tile_indices: Array, cause: StringName, actor_peer_id: int) -> void:
 	if _match_state == null:

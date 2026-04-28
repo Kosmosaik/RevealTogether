@@ -13,5 +13,5 @@ class_name MapPresetDef
 @export var reveal_mapping_mode: StringName = &"full_board_uv"
 @export var family_region_warp_frequency: float = 0.08
 @export var family_region_warp_strength: float = 3.0
-@export var rare_tile_chance: float = 0.02
+@export var family_region_seed_search_radius_chunks: int = 2
 @export var spawn_layout_id: StringName = &""

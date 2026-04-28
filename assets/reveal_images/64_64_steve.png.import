@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cbxmu6lcvqy1r"
-path="res://.godot/imported/64_64_lighthouse.png-11f83ac1ca48b4fdd633cf511f82b530.ctex"
+uid="uid://c8jpp0eqaay7d"
+path="res://.godot/imported/64_64_steve.png-966fa4c7be8767931cbf406e513b87b0.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://64_64_lighthouse.png"
-dest_files=["res://.godot/imported/64_64_lighthouse.png-11f83ac1ca48b4fdd633cf511f82b530.ctex"]
+source_file="res://assets/reveal_images/64_64_steve.png"
+dest_files=["res://.godot/imported/64_64_steve.png-966fa4c7be8767931cbf406e513b87b0.ctex"]
 
 [params]
 

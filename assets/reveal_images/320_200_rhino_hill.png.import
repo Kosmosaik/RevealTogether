@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c85ieur41jjms"
-path="res://.godot/imported/64_64_sunset.png-8d4a8cf593bee5da1dc155852eda15c0.ctex"
+uid="uid://cqp43vjd0x0a8"
+path="res://.godot/imported/320_200_rhino_hill.png-a87d2febe4286677edb2efda63346217.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://64_64_sunset.png"
-dest_files=["res://.godot/imported/64_64_sunset.png-8d4a8cf593bee5da1dc155852eda15c0.ctex"]
+source_file="res://assets/reveal_images/320_200_rhino_hill.png"
+dest_files=["res://.godot/imported/320_200_rhino_hill.png-a87d2febe4286677edb2efda63346217.ctex"]
 
 [params]
 
@@ -37,4 +37,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=0
+detect_3d/compress_to=1

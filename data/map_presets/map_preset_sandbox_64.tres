@@ -1,20 +1,20 @@
 [gd_resource type="Resource" script_class="MapPresetDef" format=3 uid="uid://dx3otn1bbjko3"]
 
 [ext_resource type="Script" uid="uid://bh7u8kcndast2" path="res://data/map_presets/MapPresetDef.gd" id="1_qfyxd"]
-[ext_resource type="Texture2D" uid="uid://cbxmu6lcvqy1r" path="res://64_64_lighthouse.png" id="1_rbeyl"]
+[ext_resource type="Texture2D" uid="uid://cqp43vjd0x0a8" path="res://assets/reveal_images/320_200_rhino_hill.png" id="1_rbeyl"]
 
 [resource]
 script = ExtResource("1_qfyxd")
-board_width = 32
-board_height = 32
-chunk_width = 4
-chunk_height = 4
-start_unlock_outer_edge_randomness = 1.0
+board_width = 320
+board_height = 200
+chunk_width = 20
+chunk_height = 20
+start_unlock_outer_edge_ratio = 0.1
+start_unlock_outer_edge_randomness = 0.9
 final_rush_remaining_tiles_threshold = 200
 reveal_image = ExtResource("1_rbeyl")
-family_region_warp_frequency = 20.0
-family_region_warp_strength = 4.0
-rare_tile_chance = 0.04
+family_region_warp_frequency = 30.0
+family_region_warp_strength = 8.0
 spawn_layout_id = &"spawn_layout.sandbox_outer_perimeter"
 id = &"map_preset.sandbox_64"
 display_name = "Sandbox 64"

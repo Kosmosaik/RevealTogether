@@ -121,7 +121,7 @@ static func _validate_phase_two_content(runtime_config, validation_errors: Packe
 		else:
 			validation_errors.append("Configured runtime map preset id does not resolve to MapPresetDef: %s" % String(resolved_map_preset_id))
 
-	_validate_tile_content_defs(validation_errors)
+	_validate_tile_content_defs(runtime_config, validation_errors)
 	_validate_role_defs(validation_errors)
 
 static func _resolve_runtime_map_preset_id(runtime_config) -> StringName:
@@ -218,10 +218,11 @@ static func _validate_spawn_layout_def(spawn_layout_def: SpawnLayoutDef, validat
 	if spawn_layout_def.corner_padding < 0.0:
 		validation_errors.append("Spawn layout '%s' must have corner_padding >= 0." % String(spawn_layout_def.id))
 
-static func _validate_tile_content_defs(validation_errors: PackedStringArray) -> void:
+static func _validate_tile_content_defs(runtime_config, validation_errors: PackedStringArray) -> void:
 	var family_id_list: Array[StringName] = []
 	var family_ids_with_variants: Dictionary = {}
 	var tile_behavior_def_count: int = 0
+	var should_validate_tile_visual_scenes: bool = _should_validate_tile_visual_scenes(runtime_config)
 
 	for content_id in ContentRegistry.get_all_content_ids():
 		var content_def: Resource = ContentRegistry.get_content(content_id)
@@ -240,7 +241,7 @@ static func _validate_tile_content_defs(validation_errors: PackedStringArray) ->
 
 		if content_def is TileVariantDef:
 			var tile_variant_def: TileVariantDef = content_def as TileVariantDef
-			_validate_tile_variant_def(tile_variant_def, validation_errors)
+			_validate_tile_variant_def(tile_variant_def, should_validate_tile_visual_scenes, validation_errors)
 
 			if family_ids_with_variants.has(tile_variant_def.family_id):
 				family_ids_with_variants[tile_variant_def.family_id] = true
@@ -259,13 +260,26 @@ static func _validate_tile_family_def(tile_family_def: TileFamilyDef, validation
 static func _validate_tile_behavior_def(tile_behavior_def: TileBehaviorDef, validation_errors: PackedStringArray) -> void:
 	_validate_content_def_base_fields(tile_behavior_def, "TileBehaviorDef '%s'" % String(tile_behavior_def.id), validation_errors)
 
-static func _validate_tile_variant_def(tile_variant_def: TileVariantDef, validation_errors: PackedStringArray) -> void:
+static func _validate_tile_variant_def(
+	tile_variant_def: TileVariantDef,
+	should_validate_tile_visual_scene: bool,
+	validation_errors: PackedStringArray
+) -> void:
 	_validate_content_def_base_fields(tile_variant_def, "TileVariantDef '%s'" % String(tile_variant_def.id), validation_errors)
 
 	if tile_variant_def.family_id == &"":
 		validation_errors.append("Tile variant '%s' has empty family_id." % String(tile_variant_def.id))
 	elif not ContentRegistry.has_content(tile_variant_def.family_id):
 		validation_errors.append("Tile variant '%s' references missing family '%s'." % [String(tile_variant_def.id), String(tile_variant_def.family_id)])
+	else:
+		var tile_family_resource: Resource = ContentRegistry.get_content(tile_variant_def.family_id)
+		if not (tile_family_resource is TileFamilyDef):
+			validation_errors.append(
+				"Tile variant '%s' references content '%s' that is not a TileFamilyDef resource." % [
+					String(tile_variant_def.id),
+					String(tile_variant_def.family_id)
+				]
+			)
 
 	if tile_variant_def.behavior_id == &"":
 		validation_errors.append("Tile variant '%s' has empty behavior_id." % String(tile_variant_def.id))
@@ -283,6 +297,104 @@ static func _validate_tile_variant_def(tile_variant_def: TileVariantDef, validat
 
 	if tile_variant_def.assignment_weight <= 0.0:
 		validation_errors.append("Tile variant '%s' must have assignment_weight > 0." % String(tile_variant_def.id))
+
+	if should_validate_tile_visual_scene:
+		_validate_tile_variant_visual_scene(tile_variant_def, validation_errors)
+
+static func _should_validate_tile_visual_scenes(runtime_config) -> bool:
+	if runtime_config == null:
+		return false
+
+	var runtime_mode_name: String = String(runtime_config.get_runtime_mode_name())
+	return runtime_mode_name != "dedicated_server"
+
+static func _validate_tile_variant_visual_scene(tile_variant_def: TileVariantDef, validation_errors: PackedStringArray) -> void:
+	if tile_variant_def.visual_scene == null:
+		validation_errors.append("Tile variant '%s' is missing visual_scene." % String(tile_variant_def.id))
+		return
+
+	var visual_scene_path: String = tile_variant_def.visual_scene.resource_path
+	var visual_root_node: Node = tile_variant_def.visual_scene.instantiate()
+
+	if visual_root_node == null:
+		validation_errors.append(
+			"Tile variant '%s' visual_scene could not be instantiated: %s" % [
+				String(tile_variant_def.id),
+				visual_scene_path
+			]
+		)
+		return
+
+	var tile_visual: BoardTileVisual = visual_root_node as BoardTileVisual
+	if tile_visual == null:
+		validation_errors.append(
+			"Tile variant '%s' visual_scene root must be BoardTileVisual: %s" % [
+				String(tile_variant_def.id),
+				visual_scene_path
+			]
+		)
+		visual_root_node.free()
+		return
+
+	_validate_tile_visual_node_path(
+		tile_variant_def,
+		tile_visual,
+		tile_visual.content_root_path,
+		"content_root_path",
+		validation_errors
+	)
+	_validate_tile_visual_node_path(
+		tile_variant_def,
+		tile_visual,
+		tile_visual.locked_overlay_path,
+		"locked_overlay_path",
+		validation_errors
+	)
+	_validate_tile_visual_node_path(
+		tile_variant_def,
+		tile_visual,
+		tile_visual.claimed_overlay_path,
+		"claimed_overlay_path",
+		validation_errors
+	)
+
+	visual_root_node.free()
+
+static func _validate_tile_visual_node_path(
+	tile_variant_def: TileVariantDef,
+	tile_visual: BoardTileVisual,
+	visual_node_path: NodePath,
+	property_name: String,
+	validation_errors: PackedStringArray
+) -> void:
+	if visual_node_path.is_empty():
+		validation_errors.append(
+			"Tile variant '%s' visual_scene has empty BoardTileVisual.%s." % [
+				String(tile_variant_def.id),
+				property_name
+			]
+		)
+		return
+
+	var resolved_node: Node = tile_visual.get_node_or_null(visual_node_path)
+	if resolved_node == null:
+		validation_errors.append(
+			"Tile variant '%s' visual_scene BoardTileVisual.%s points to missing node path '%s'." % [
+				String(tile_variant_def.id),
+				property_name,
+				String(visual_node_path)
+			]
+		)
+		return
+
+	if not (resolved_node is Node3D):
+		validation_errors.append(
+			"Tile variant '%s' visual_scene BoardTileVisual.%s must point to a Node3D, but points to '%s'." % [
+				String(tile_variant_def.id),
+				property_name,
+				resolved_node.get_class()
+			]
+		)
 
 static func _validate_tile_family_variant_links(family_id_list: Array[StringName], family_ids_with_variants: Dictionary, validation_errors: PackedStringArray) -> void:
 	for family_id in family_id_list:
